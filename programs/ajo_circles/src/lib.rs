@@ -30,6 +30,12 @@ pub mod ajo_circles {
     ) -> Result<()> {
         create_circle::process(ctx, circle_id, name, contribution, period_secs, max_members)
     }
+    pub fn initialize_pot_vault(ctx: Context<InitializePotVault>) -> Result<()> {
+        initialize_vaults::process_pot(ctx)
+    }
+    pub fn initialize_deposit_vault(ctx: Context<InitializeDepositVault>) -> Result<()> {
+        initialize_vaults::process_deposit(ctx)
+    }
     pub fn join_circle(ctx: Context<JoinCircle>, slot: u8) -> Result<()> {
         join_circle::process(ctx, slot)
     }

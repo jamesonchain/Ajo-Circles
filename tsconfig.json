@@ -4,7 +4,12 @@
     "typeRoots": ["./node_modules/@types"],
     "lib": ["es2015"],
     "module": "commonjs",
+    "moduleResolution": "node",
     "target": "es6",
-    "esModuleInterop": true
-  }
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["tests/**/*.ts", "migrations/**/*.ts", "target/types/**/*.ts"]
 }

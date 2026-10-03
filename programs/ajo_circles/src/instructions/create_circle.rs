@@ -5,7 +5,7 @@ use crate::{
     state::{Circle, CircleStatus, Config},
 };
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use anchor_spl::token_interface::Mint;
 #[derive(Accounts)]
 #[instruction(circle_id: u64)]
 pub struct CreateCircle<'info> {
@@ -17,11 +17,6 @@ pub struct CreateCircle<'info> {
     pub mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(init, payer = creator, space = 8 + 32 + 8 + 4 + MAX_NAME_LEN + 32 + 8 + 8 + 1 + 1 + 2 + 1 + 1 + 8 + 1 + 8 + 8 + 1, seeds = [CIRCLE_SEED, creator.key().as_ref(), circle_id.to_le_bytes().as_ref()], bump)]
     pub circle: Box<Account<'info, Circle>>,
-    #[account(init, payer = creator, token::mint = mint, token::authority = circle, seeds = [POT_SEED, circle.key().as_ref()], bump)]
-    pub pot_vault: Box<InterfaceAccount<'info, TokenAccount>>,
-    #[account(init, payer = creator, token::mint = mint, token::authority = circle, seeds = [DEPOSIT_SEED, circle.key().as_ref()], bump)]
-    pub deposit_vault: Box<InterfaceAccount<'info, TokenAccount>>,
-    pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 pub fn process(

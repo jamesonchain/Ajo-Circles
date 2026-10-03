@@ -10,8 +10,8 @@ The Anchor workspace builds its core account model for config, circle, and membe
 
 ## Broken or unfinished
 
-The program still needs default settlement, payout, completion, cancellation, refunds, deposit withdrawal, SDK, web app, and the full test suite. The program build passes with `anchor build --no-idl`. Anchor 0.30.1 IDL generation does not compile on Rust 1.96 because its bundled `anchor-syn` expects an older proc macro span API. The SBF build also reports a stack size warning for the create instruction that needs a follow up reduction before deployment.
+The program still needs default settlement, payout, completion, cancellation, refunds, deposit withdrawal, SDK, web app, and the full test suite. The account model and first four instructions compile with `anchor build --no-idl`. The create stack warning is resolved by boxing large accounts and moving pot and deposit vault initialization into two small follow up instructions. Full IDL generation is blocked by Anchor 0.30.1 calling the removed `proc_macro2::Span::source_file` API, so `target/idl` and `target/types` are not currently generated. The TypeScript test cannot run without those generated artifacts and installed Node dependencies.
 
 ## Next
 
-Reduce the create instruction stack frame, add the milestone tests, and commit the working milestone.
+Establish a compatible IDL generation toolchain, add the milestone tests, and commit the working milestone.
