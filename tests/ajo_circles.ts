@@ -192,8 +192,25 @@ describe("ajo_circles", () => {
     }
   });
 
-  it("runs a complete five member circle and records scores", async () => {
+  it("runs a complete five member circle, records scores, and checks conservation", async () => {
     const { circle, potVault, depositVault } = await createAndPrepareCircle(1);
+    const treasuryBefore = (await getAccount(provider.connection, treasury))
+      .amount;
+    let totalIn = 0n;
+    let previousOut = 0n;
+    const assertConservation = async () => {
+      const pot = (await getAccount(provider.connection, potVault)).amount;
+      const deposits = (await getAccount(provider.connection, depositVault))
+        .amount;
+      if (pot + deposits > totalIn) {
+        throw new Error("Vault balances exceed tokens ever put in");
+      }
+      const totalOut = totalIn - pot - deposits;
+      if (totalOut < previousOut || pot + deposits + totalOut !== totalIn) {
+        throw new Error("Token conservation invariant failed");
+      }
+      previousOut = totalOut;
+    };
     for (let slot = 0; slot < members.length; slot += 1) {
       const wallet = members[slot];
       await program.methods
@@ -211,6 +228,8 @@ describe("ajo_circles", () => {
         })
         .signers([wallet])
         .rpc();
+      totalIn += calculateDeposit(contribution, members.length, slot);
+      await assertConservation();
     }
     for (let round = 0; round < members.length; round += 1) {
       for (const wallet of members) {
@@ -224,10 +243,12 @@ describe("ajo_circles", () => {
             source: getAssociatedTokenAddressSync(mint, wallet.publicKey),
             potVault,
             mint,
-            tokenProgram: TOKEN_PROGRAM_ID,
-          })
-          .signers([wallet])
-          .rpc();
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([wallet])
+        .rpc();
+        totalIn += BigInt(contribution);
+        await assertConservation();
       }
       const recipient = members[round];
       await program.methods
@@ -250,6 +271,7 @@ describe("ajo_circles", () => {
           systemProgram: SystemProgram.programId,
         })
         .rpc();
+      await assertConservation();
     }
     const finalCircle = await program.account.circle.fetch(circle);
     if (
@@ -282,11 +304,42 @@ describe("ajo_circles", () => {
           systemProgram: SystemProgram.programId,
         })
         .rpc();
+      const score = await program.account.ajoScore.fetch(
+        scorePda(wallet.publicKey)
+      );
+      if (score.circlesCompleted !== 1 || score.circlesJoined !== 1) {
+        throw new Error("Score was not finalized correctly");
+      }
+      if (wallet === members[0]) {
+        let replayRejected = false;
+        try {
+          await program.methods
+            .finalizeScore()
+            .accountsPartial({
+              caller: provider.wallet.publicKey,
+              circle,
+              member: memberPda(circle, wallet.publicKey),
+              score: scorePda(wallet.publicKey),
+              systemProgram: SystemProgram.programId,
+            })
+            .rpc();
+        } catch {
+          replayRejected = true;
+        }
+        if (!replayRejected) throw new Error("Score replay was accepted");
+      }
     }
     const pot = await getAccount(provider.connection, potVault);
     const deposits = await getAccount(provider.connection, depositVault);
     if (pot.amount !== 0n || deposits.amount !== 0n) {
       throw new Error("Vaults were not emptied");
+    }
+    const treasuryAfter = (await getAccount(provider.connection, treasury))
+      .amount;
+    const expectedFees =
+      BigInt(contribution * members.length * members.length) * 50n / 10_000n;
+    if (treasuryAfter - treasuryBefore !== expectedFees) {
+      throw new Error("Treasury fee total is incorrect");
     }
   });
 
