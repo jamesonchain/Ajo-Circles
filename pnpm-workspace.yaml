@@ -1,0 +1,6 @@
+packages:
+  - "."
+  - "app"
+
+allowBuilds:
+  bigint-buffer: set this to true or false

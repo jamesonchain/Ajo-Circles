@@ -15,7 +15,7 @@ pub struct CreateCircle<'info> {
     pub config: Box<Account<'info, Config>>,
     #[account(address = config.mint)]
     pub mint: Box<InterfaceAccount<'info, Mint>>,
-    #[account(init, payer = creator, space = 8 + 32 + 8 + 4 + MAX_NAME_LEN + 32 + 8 + 8 + 1 + 1 + 2 + 1 + 1 + 8 + 1 + 8 + 8 + 1, seeds = [CIRCLE_SEED, creator.key().as_ref(), circle_id.to_le_bytes().as_ref()], bump)]
+    #[account(init, payer = creator, space = 8 + 512, seeds = [CIRCLE_SEED, creator.key().as_ref(), circle_id.to_le_bytes().as_ref()], bump)]
     pub circle: Box<Account<'info, Circle>>,
     pub system_program: Program<'info, System>,
 }
@@ -55,6 +55,10 @@ pub fn process(
     c.round_start_ts = 0;
     c.contributions_this_round = 0;
     c.total_paid_out = 0;
+    c.shortfall_total = 0;
+    c.forfeit_pool = 0;
+    c.forfeit_claims = 0;
+    c.eligible_members = 0;
     c.created_ts = Clock::get()?.unix_timestamp;
     c.bump = ctx.bumps.circle;
     emit!(CircleCreated {

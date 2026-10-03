@@ -14,7 +14,7 @@ pub struct JoinCircle<'info> {
     pub config: Box<Account<'info, Config>>,
     #[account(mut, seeds = [CIRCLE_SEED, circle.creator.as_ref(), circle.circle_id.to_le_bytes().as_ref()], bump = circle.bump)]
     pub circle: Box<Account<'info, Circle>>,
-    #[account(init, payer = wallet, space = 8 + 32 + 32 + 1 + 8 + 8 + 2 + 1 + 1 + 1 + 1, seeds = [MEMBER_SEED, circle.key().as_ref(), wallet.key().as_ref()], bump)]
+    #[account(init, payer = wallet, space = 8 + 256, seeds = [MEMBER_SEED, circle.key().as_ref(), wallet.key().as_ref()], bump)]
     pub member: Box<Account<'info, Member>>,
     #[account(mut, constraint = source.mint == circle.mint @ ErrorCode::MintMismatch, constraint = source.owner == wallet.key() @ ErrorCode::TokenOwnerMismatch)]
     pub source: Box<InterfaceAccount<'info, TokenAccount>>,
@@ -60,6 +60,10 @@ pub fn process(ctx: Context<JoinCircle>, slot: u8) -> Result<()> {
     m.defaults = 0;
     m.received = false;
     m.deposit_withdrawn = false;
+    m.score_recorded = false;
+    m.paid_on_time = 0;
+    m.contributed_total = 0;
+    m.forfeit_claimed = false;
     m.bump = ctx.bumps.member;
     c.slots_taken |= bit;
     c.member_count = c
@@ -68,6 +72,7 @@ pub fn process(ctx: Context<JoinCircle>, slot: u8) -> Result<()> {
         .ok_or(ErrorCode::MathOverflow)?;
     if c.member_count == c.max_members {
         c.status = CircleStatus::Active;
+        c.eligible_members = c.max_members;
         c.round_start_ts = Clock::get()?.unix_timestamp;
     }
     emit!(MemberJoined {

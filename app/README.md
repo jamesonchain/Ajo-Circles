@@ -1,3 +1,3 @@
 # Ajo Circles web app
 
-The Next.js App Router application will be scaffolded in the web milestone after the onchain test suite is complete.
+Run `pnpm install` and `pnpm dev` from this directory. The app is an App Router frontend with a local demo state until a wallet adapter and RPC environment are configured.

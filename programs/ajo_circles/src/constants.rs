@@ -6,3 +6,4 @@ pub const DEPOSIT_SEED: &[u8] = b"deposit";
 pub const MAX_NAME_LEN: usize = 32;
 pub const MIN_MEMBERS: u8 = 3;
 pub const MAX_MEMBERS: u8 = 12;
+pub const MAX_FEE_BPS: u16 = 200;

@@ -1,4 +1,8 @@
-use crate::{constants::CONFIG_SEED, error::ErrorCode, state::Config};
+use crate::{
+    constants::{CONFIG_SEED, MAX_FEE_BPS},
+    error::ErrorCode,
+    state::Config,
+};
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount};
 #[derive(Accounts)]
@@ -13,7 +17,7 @@ pub struct InitConfig<'info> {
     pub system_program: Program<'info, System>,
 }
 pub fn process(ctx: Context<InitConfig>, fee_bps: u16, min_period_secs: i64) -> Result<()> {
-    require!(fee_bps <= 10_000, ErrorCode::InvalidFee);
+    require!(fee_bps <= MAX_FEE_BPS, ErrorCode::InvalidFee);
     require!(min_period_secs > 0, ErrorCode::InvalidMinimumPeriod);
     let c = &mut ctx.accounts.config;
     c.admin = ctx.accounts.admin.key();

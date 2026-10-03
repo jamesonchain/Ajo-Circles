@@ -4,4 +4,8 @@ The Anchor program uses a config account, one circle account per creator and cir
 
 For slot `s`, the deposit is `contribution times max of 1 and max members minus 1 minus s`. With five members and a contribution of 10 USDC, slots 0 through 4 require 40, 30, 20, 10, and 10 USDC.
 
-The first milestone covers config initialization, circle creation, joining, and contributions. The remaining settlement and payout flow is described in the master build prompt and will be added in the next milestone.
+The program now includes cancellation, deposit refunds, default cover, payouts, forfeiture shares, deposit withdrawal, and Ajo Score finalization. All transfers from either vault use the Circle PDA as the signing authority. Account validation checks the circle seeds, member relationship, token mint, token owners, and configured treasury.
+
+The active round is complete when every member has either contributed or been settled as a default. A payout uses the pot balance at that point. The fee is the floor of pot balance multiplied by fee basis points divided by ten thousand. The recipient receives the remainder. If the recipient has defaulted, the payout remains in the pot. At completion, the remaining pot is the forfeiture pool. Members with zero defaults claim equal shares, with any remainder units assigned one each to the first claims.
+
+The AjoScore account is derived from the wallet and is updated once for each completed circle. It records completed circles, rounds paid on time, defaults, and the amount contributed directly by the wallet. The current test harness proves the complete no default path, one covered default, cancellation refund, score finalization, and the core helper math.

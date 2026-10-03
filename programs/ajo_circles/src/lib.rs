@@ -42,4 +42,25 @@ pub mod ajo_circles {
     pub fn contribute(ctx: Context<Contribute>) -> Result<()> {
         contribute::process(ctx)
     }
+    pub fn cancel_circle(ctx: Context<CancelCircle>) -> Result<()> {
+        cancel_circle::process(ctx)
+    }
+    pub fn refund_deposit(ctx: Context<RefundDeposit>) -> Result<()> {
+        refund_deposit::process(ctx)
+    }
+    pub fn settle_default(ctx: Context<SettleDefault>) -> Result<()> {
+        settle_default::process(ctx)
+    }
+    pub fn claim_payout(ctx: Context<ClaimPayout>) -> Result<()> {
+        claim_payout::process(ctx)
+    }
+    pub fn claim_forfeit_share(ctx: Context<ClaimForfeitShare>) -> Result<()> {
+        claim_forfeit_share::process(ctx)
+    }
+    pub fn withdraw_deposit(ctx: Context<WithdrawDeposit>) -> Result<()> {
+        withdraw_deposit::process(ctx)
+    }
+    pub fn finalize_score(ctx: Context<FinalizeScore>) -> Result<()> {
+        finalize_score::process(ctx)
+    }
 }

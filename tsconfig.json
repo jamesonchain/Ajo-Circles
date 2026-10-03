@@ -2,14 +2,19 @@
   "compilerOptions": {
     "types": ["mocha", "chai"],
     "typeRoots": ["./node_modules/@types"],
-    "lib": ["es2015"],
+    "lib": ["es2020"],
     "module": "commonjs",
     "moduleResolution": "node",
-    "target": "es6",
+    "target": "es2020",
     "esModuleInterop": true,
     "strict": true,
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["tests/**/*.ts", "migrations/**/*.ts", "target/types/**/*.ts"]
+  "include": [
+    "tests/**/*.ts",
+    "migrations/**/*.ts",
+    "sdk/**/*.ts",
+    "target/types/**/*.ts"
+  ]
 }

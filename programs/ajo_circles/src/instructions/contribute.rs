@@ -53,6 +53,18 @@ pub fn process(ctx: Context<Contribute>) -> Result<()> {
     );
     anchor_spl::token_interface::transfer_checked(cp, c.contribution, ctx.accounts.mint.decimals)?;
     ctx.accounts.member.paid_bitmask |= bit;
+    ctx.accounts.member.paid_on_time = ctx
+        .accounts
+        .member
+        .paid_on_time
+        .checked_add(1)
+        .ok_or(ErrorCode::MathOverflow)?;
+    ctx.accounts.member.contributed_total = ctx
+        .accounts
+        .member
+        .contributed_total
+        .checked_add(c.contribution)
+        .ok_or(ErrorCode::MathOverflow)?;
     c.contributions_this_round = c
         .contributions_this_round
         .checked_add(1)

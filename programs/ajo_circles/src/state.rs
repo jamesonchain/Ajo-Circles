@@ -27,6 +27,10 @@ pub struct Circle {
     pub total_paid_out: u64,
     pub created_ts: i64,
     pub bump: u8,
+    pub shortfall_total: u64,
+    pub forfeit_pool: u64,
+    pub forfeit_claims: u8,
+    pub eligible_members: u8,
 }
 #[account]
 pub struct Member {
@@ -39,6 +43,22 @@ pub struct Member {
     pub defaults: u8,
     pub received: bool,
     pub deposit_withdrawn: bool,
+    pub score_recorded: bool,
+    pub paid_on_time: u8,
+    pub contributed_total: u64,
+    pub forfeit_claimed: bool,
+    pub bump: u8,
+}
+
+#[account]
+pub struct AjoScore {
+    pub wallet: Pubkey,
+    pub circles_joined: u32,
+    pub circles_completed: u32,
+    pub rounds_paid_on_time: u64,
+    pub rounds_defaulted: u64,
+    pub total_contributed: u64,
+    pub last_updated_ts: i64,
     pub bump: u8,
 }
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
