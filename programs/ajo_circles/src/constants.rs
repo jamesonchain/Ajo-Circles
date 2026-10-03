@@ -1,0 +1,8 @@
+pub const CONFIG_SEED: &[u8] = b"config";
+pub const CIRCLE_SEED: &[u8] = b"circle";
+pub const MEMBER_SEED: &[u8] = b"member";
+pub const POT_SEED: &[u8] = b"pot";
+pub const DEPOSIT_SEED: &[u8] = b"deposit";
+pub const MAX_NAME_LEN: usize = 32;
+pub const MIN_MEMBERS: u8 = 3;
+pub const MAX_MEMBERS: u8 = 12;
