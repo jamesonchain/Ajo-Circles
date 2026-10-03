@@ -1,6 +1,6 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import { AjoCircles } from "../target/types/ajo_circles";
+import { AjoCircles } from "../target/types/ajo_circles.js";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -16,7 +16,7 @@ import {
   deriveCircle,
   deriveConfig,
   nextDeadline,
-} from "../sdk/src";
+} from "../sdk/src/index.js";
 
 describe("ajo_circles", () => {
   const provider = anchor.AnchorProvider.env();

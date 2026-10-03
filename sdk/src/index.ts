@@ -1,5 +1,5 @@
 import * as anchor from "@coral-xyz/anchor";
-import { AjoCircles } from "../../target/types/ajo_circles";
+import { AjoCircles } from "../../target/types/ajo_circles.js";
 import { PublicKey, TransactionInstruction } from "@solana/web3.js";
 
 export const SEEDS = {
