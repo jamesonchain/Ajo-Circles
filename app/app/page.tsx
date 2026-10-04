@@ -701,9 +701,7 @@ export default function Home() {
     (member) => (member.paidBitmask & currentRoundBit) === 0
   );
   const primaryAction = selectedComplete
-    ? selectedMembership && !selectedMembership.member.depositWithdrawn
-      ? { label: "Withdraw my deposit", action: withdrawDeposit, icon: ArrowDownToLine }
-      : null
+    ? null
     : selectedIsActive && roundComplete && isRecipient
     ? { label: "Claim payout", action: claimCurrentPayout, icon: ArrowDownToLine }
     : selectedIsActive && selectedMembership && !currentRoundPaid
@@ -805,7 +803,7 @@ export default function Home() {
         <div className="workspace-main">
           <div className="section-head compact-head">
             <div>
-              <span className="eyebrow">Your circles</span>
+              <span className="eyebrow">My circles</span>
               <h2>Circle activity</h2>
             </div>
             {wallet.publicKey && (
@@ -1000,6 +998,23 @@ export default function Home() {
             </button>
           )}
         </div>
+        {selectedComplete && selectedMembership && (
+          <div className="completion-card">
+            <div>
+              <span className="eyebrow">Circle complete</span>
+              <h3>Your savings cycle is finished</h3>
+              <p>Your unused deposit is ready to return. Record this completed circle in your Ajo Score.</p>
+            </div>
+            <div className="completion-actions">
+              {!selectedMembership.member.depositWithdrawn && (
+                <button className="button button-primary" onClick={() => void withdrawDeposit()} disabled={busy}><ArrowDownToLine size={17} /> Withdraw my deposit</button>
+              )}
+              {!selectedMembership.member.scoreRecorded && (
+                <button className="button button-gold" onClick={() => void finalizeScore()} disabled={busy}><Check size={17} /> Update my Ajo Score</button>
+              )}
+            </div>
+          </div>
+        )}
         <div className="selected-layout">
           <div className="ring-stage">
             <CircleRing

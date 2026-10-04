@@ -915,6 +915,22 @@ h3 {
   justify-content: center;
 }
 
+.completion-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.25rem 0 0;
+  padding: 1rem;
+  border: 1px solid var(--gold);
+  border-radius: 1rem;
+  background: var(--green-soft);
+}
+
+.completion-card h3 { margin: 0.25rem 0; }
+.completion-card p { max-width: 34rem; margin: 0; color: var(--muted); }
+.completion-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.55rem; }
+
 .circle-subsection {
   margin-top: 1.5rem;
   padding-top: 1.25rem;
