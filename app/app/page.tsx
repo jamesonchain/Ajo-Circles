@@ -27,7 +27,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import type { CircleMembership } from "ajo_circles_sdk";
+import { calculateDeposit, type CircleMembership } from "ajo_circles_sdk";
 import { CircleRing } from "./components/circle-ring";
 import { useCircleData } from "./hooks/use-circle-data";
 
@@ -157,8 +157,10 @@ export default function Home() {
   const [circleAddressInput, setCircleAddressInput] = useState("");
   const [circleName, setCircleName] = useState("");
   const [contribution, setContribution] = useState("10");
-  const [periodDays, setPeriodDays] = useState("7");
+  const [frequency, setFrequency] = useState("weekly");
   const [maxMembers, setMaxMembers] = useState("5");
+  const [createStep, setCreateStep] = useState(1);
+  const [createdInvite, setCreatedInvite] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [noticeError, setNoticeError] = useState(false);
@@ -260,18 +262,27 @@ export default function Home() {
 
   async function createCircle(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (createStep < 3) {
+      setCreateStep((step) => step + 1);
+      return;
+    }
     if (!wallet.publicKey) {
       showNotice("Connect your wallet to create a circle.", true);
       return;
     }
     const amount = Math.round(Number(contribution) * 10 ** decimals);
     const membersCount = Number(maxMembers);
-    const days = Number(periodDays);
+    const periodSeconds = {
+      daily: 86_400,
+      weekly: 604_800,
+      biweekly: 1_209_600,
+      monthly: 2_592_000,
+    }[frequency];
     if (
       !circleName.trim() ||
       circleName.length > 32 ||
       amount <= 0 ||
-      days < 1 ||
+      !periodSeconds ||
       membersCount < 3 ||
       membersCount > 12
     ) {
@@ -298,7 +309,7 @@ export default function Home() {
           circleId,
           circleName.trim(),
           amount,
-          days * 86_400,
+          periodSeconds,
           membersCount,
           baseAccounts
         )
@@ -326,8 +337,8 @@ export default function Home() {
         })
       );
       setSelectedAddress(address.toBase58());
-      setCircleName("");
-      setDialog(null);
+      setCreatedInvite(address.toBase58());
+      setCreateStep(4);
       await refresh();
     } catch (cause) {
       showNotice(friendlyError(cause), true);
@@ -434,11 +445,12 @@ export default function Home() {
 
   async function coverMissingPayment() {
     if (!selectedCircle || !wallet.publicKey) return;
+    const caller = wallet.publicKey;
     const roundBit = 1 << selectedCircle.account.currentRound;
     const missed = selectedMembers.find(
       (member) =>
         (member.paidBitmask & roundBit) === 0 &&
-        !member.wallet.equals(wallet.publicKey)
+        !member.wallet.equals(caller)
     );
     if (!missed) {
       showNotice("Every member has paid or been covered this round.");
@@ -1165,11 +1177,21 @@ export default function Home() {
                 <X size={19} />
               </button>
             </div>
-            {dialog === "create" ? (
+            {dialog === "create" ? createStep === 4 ? (
+              <div className="circle-form">
+                <p className="form-help">Your circle and both vaults are confirmed on devnet. Share this invite so your group can choose their turns.</p>
+                <label>Invite link<input readOnly value={`${typeof window === "undefined" ? "" : window.location.origin}/?circle=${createdInvite}`} /></label>
+                <button className="button button-primary form-submit" onClick={() => void copyInvite(createdInvite)}><Copy size={17} /> Copy invite link</button>
+                <button className="button button-outline form-submit" onClick={() => void shareInvite(createdInvite, circleName)}><ArrowUpRight size={17} /> Share on WhatsApp</button>
+                <button className="button button-quiet form-submit" onClick={() => { setDialog(null); setCreateStep(1); setCircleName(""); }}>Done</button>
+              </div>
+            ) : (
               <form
                 className="circle-form"
                 onSubmit={(event) => void createCircle(event)}
               >
+                {createStep === 1 && <>
+                <div className="wizard-progress">Step 1 of 3, circle details</div>
                 <label>
                   Circle name
                   <input
@@ -1194,45 +1216,45 @@ export default function Home() {
                     />
                     <small>USDC</small>
                   </label>
-                  <label>
-                    Members
-                    <select
-                      value={maxMembers}
-                      onChange={(event) => setMaxMembers(event.target.value)}
-                    >
-                      {Array.from({ length: 10 }, (_, index) => index + 3).map(
-                        (count) => (
-                          <option key={count} value={count}>
-                            {count}
-                          </option>
-                        )
-                      )}
-                    </select>
-                  </label>
                 </div>
-                <label>
-                  Days between payments
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={periodDays}
-                    onChange={(event) => setPeriodDays(event.target.value)}
-                    required
-                  />
+                </>}
+                {createStep === 2 && <>
+                <div className="wizard-progress">Step 2 of 3, payment schedule</div>
+                <label>How often will everyone contribute?
+                  <select value={frequency} onChange={(event) => setFrequency(event.target.value)}>
+                    <option value="daily">Every day</option>
+                    <option value="weekly">Every week</option>
+                    <option value="biweekly">Every two weeks</option>
+                    <option value="monthly">Every month</option>
+                  </select>
                 </label>
-                <div className="deposit-note">
-                  <ShieldCheck size={17} />
-                  <span>
-                    The deposit is larger for earlier turns and returns after
-                    the circle is complete.
-                  </span>
+                <label>How many people are in the circle?
+                  <select value={maxMembers} onChange={(event) => setMaxMembers(event.target.value)}>
+                    {Array.from({ length: 10 }, (_, index) => index + 3).map((count) => <option key={count} value={count}>{count} members</option>)}
+                  </select>
+                </label>
+                </>}
+                {createStep === 3 && <>
+                <div className="wizard-progress">Step 3 of 3, review deposits</div>
+                <div className="join-preview"><strong>{circleName}</strong><span>{contribution} USDC each round, {frequency === "biweekly" ? "every two weeks" : frequency === "daily" ? "every day" : frequency === "monthly" ? "every month" : "every week"}</span><span>{maxMembers} member turns</span></div>
+                <div className="slot-deposit-list">
+                  {Array.from({ length: Number(maxMembers) }, (_, slot) => (
+                    <div className="slot-deposit-row" key={slot}><span>Turn {slot + 1}{slot === 0 ? ", earliest" : ""}</span><strong>{amountText(calculateDeposit(BigInt(Math.round(Number(contribution) * 10 ** decimals)), Number(maxMembers), slot))} USDC</strong></div>
+                  ))}
                 </div>
+                <div className="deposit-note"><ShieldCheck size={17} /><span>Earlier turns hold a larger deposit. Your unused amount can be withdrawn after the circle is complete.</span></div>
+                </>}
+                {createStep > 1 && <button type="button" className="button button-quiet form-submit" onClick={() => setCreateStep((step) => step - 1)}>Back</button>}
                 <button
                   className="button button-primary form-submit"
-                  disabled={busy || !wallet.publicKey}
+                  disabled={
+                    busy ||
+                    (createStep === 3 && !wallet.publicKey) ||
+                    (createStep === 1 &&
+                      (!circleName.trim() || Number(contribution) <= 0))
+                  }
                 >
-                  {busy ? "Waiting for wallet" : "Create circle"}
+                  {busy ? "Waiting for wallet" : createStep < 3 ? "Continue" : "Create circle"}
                 </button>
               </form>
             ) : (

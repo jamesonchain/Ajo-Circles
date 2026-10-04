@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-Milestones A, contract, A2, devnet deployment, and B, SDK, are complete and verified. Milestone C, web app, is next.
+Milestones A, contract, A2, devnet deployment, and B, SDK, are complete and verified. Milestone C is in progress.
 
 ## Verified results
 
@@ -18,12 +18,14 @@ The `pnpm devnet:smoke` script created test mint `9qGJsamQ8irgapMSmEoR525GhD7DH4
 
 The SDK is a workspace package with explicit builders for all 13 instructions, packaged IDL and generated types, PDA and deposit helpers, account readers, member listing, wallet circle discovery, next payment due lookup, Ajo Score reads, and event decoding. The five line wallet summary example was installed and run from an isolated consumer project against devnet. It returned the deployer wallet, zero circles, no due payment, and no score, as expected for that wallet.
 
+The app has a real Phantom and Solflare wallet selector, devnet account reads, a data driven circle ring, live totals, wallet circle and score states, an open circle directory, and the circle creation wizard. The wizard now has name and amount, payment frequency and group size, a slot deposit review, and an invite screen with copy and WhatsApp actions. The slot review was verified in the browser and showed the expected deposits. The create and vault transactions have not yet been signed from this app because no browser wallet is connected.
+
 ## Not Yet Verified
 
-The SDK has not been published to a public package registry. The web app remains a foundation and is not connected to real wallet transactions or live circle state. A full savings cycle with a covered default has not been run on devnet. No independent security audit has been performed.
+The create wizard transaction has not been verified from the app. Joining from an invite, a complete circle action page, wallet initiated payment and payout, the test money route, and the completion view are not done. A full savings cycle with a covered default has not been run on devnet. The SDK has not been published to a public package registry. No independent security audit has been performed.
 
 The build emits existing Anchor macro configuration, glob re export, and deprecation warnings. They do not prevent the build or tests from passing.
 
 ## Next
 
-Begin Milestone C. Inspect the existing app before editing, then implement real wallet connection and chain backed views against the verified devnet program. Preserve the existing circle ring foundation. Follow the screens and UX requirements in `docs/MASTER_PROMPT_V2.md`, verify each working flow in a real run, then run the full build and tests, update this status, and commit and push the milestone.
+Next, complete the join from invite page with open turns, exact deposits, a plain explanation, and a wallet signed devnet join. Run the app typecheck and production build, update this status, then commit and push before implementing the circle action page.
