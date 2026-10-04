@@ -1,175 +1,1299 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import * as anchor from "@coral-xyz/anchor";
+import dynamic from "next/dynamic";
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  getAccount,
+  getAssociatedTokenAddress,
+} from "@solana/spl-token";
+import { useConnection } from "@solana/wallet-adapter-react";
+import { Transaction } from "@solana/web3.js";
+import { motion } from "framer-motion";
+import {
+  ArrowDownToLine,
+  ArrowUpRight,
+  Check,
+  CircleHelp,
+  Clock3,
+  Copy,
+  ExternalLink,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Users,
+  Wallet,
+  X,
+} from "lucide-react";
+import type { CircleMembership } from "ajo_circles_sdk";
 import { CircleRing } from "./components/circle-ring";
+import { useCircleData } from "./hooks/use-circle-data";
+
+const WalletMultiButton = dynamic(
+  () =>
+    import("@solana/wallet-adapter-react-ui").then(
+      (module) => module.WalletMultiButton
+    ),
+  {
+    ssr: false,
+    loading: () => <button className="wallet-button">Connect</button>,
+  }
+);
+
+const explorerBase = "https://explorer.solana.com/address";
+const decimals = 6;
+
+function amountText(amount: bigint | number | string) {
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(amount) / 10 ** decimals);
+}
+
+function compactAddress(address: string) {
+  return `${address.slice(0, 5)}...${address.slice(-4)}`;
+}
+
+function statusName(status: object) {
+  const key = Object.keys(status)[0] ?? "unknown";
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+function friendlyError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const known: Record<string, string> = {
+    InvalidFee: "The circle settings include an unsupported service fee.",
+    InvalidMinimumPeriod: "Choose a payment period longer than zero.",
+    NameTooLong: "Keep the circle name to 32 characters or fewer.",
+    InvalidContribution: "Enter a contribution greater than zero.",
+    CircleNotForming: "This circle is no longer accepting members.",
+    AlreadyPaid: "You have already paid for this round.",
+    DeadlinePassed:
+      "The payment window has closed. Ask someone in the circle to cover this payment.",
+    DeadlineNotPassed: "This payment is still within its payment window.",
+    PayoutNotReady:
+      "The pot is ready after every member has paid or been covered.",
+    WrongRecipient: "It is not this member’s payout turn.",
+    CircleNotCompleted:
+      "The deposit becomes available after the circle is complete.",
+    NoDeposit: "There is no deposit left to withdraw.",
+    SlotTaken: "That turn has already been chosen.",
+    PeriodTooShort: "Choose a longer payment period.",
+    InvalidMemberCount: "Choose between 3 and 12 members.",
+    InvalidSlot: "That turn is outside this circle.",
+    MintMismatch: "This account does not use the circle’s test USDC.",
+    TokenOwnerMismatch:
+      "Choose a test USDC account owned by your connected wallet.",
+    CircleNotActive: "This action is available while the circle is active.",
+    CircleNotFull: "This action is available after every turn is chosen.",
+    AlreadySettled: "This payment has already been settled.",
+    CircleComplete: "This circle has already finished.",
+    CircleNotCancelled: "This circle is not cancelled.",
+    DepositAlreadyWithdrawn: "This deposit has already been returned.",
+    PayoutAlreadyClaimed: "This turn has already been paid.",
+    NoForfeitShare: "There is no eligible share left to claim.",
+    ForfeitShareAlreadyClaimed: "Your circle share has already been claimed.",
+    ScoreAlreadyRecorded:
+      "Your Ajo Score has already been updated for this circle.",
+    MemberMismatch: "This wallet is not a member of the selected circle.",
+  };
+  for (const [code, text] of Object.entries(known)) {
+    if (message.includes(code)) return text;
+  }
+  if (/insufficient funds|custom program error: 0x1/i.test(message)) {
+    return "This wallet needs more devnet SOL or test USDC for this action.";
+  }
+  if (/rejected|declined/i.test(message))
+    return "The wallet request was cancelled.";
+  return "That request did not finish. Check the network and try again.";
+}
+
+function deadlineText(deadline: bigint) {
+  const seconds = Number(deadline) - Math.floor(Date.now() / 1000);
+  if (seconds <= 0) return "Past due";
+  const days = Math.floor(seconds / 86_400);
+  const hours = Math.floor((seconds % 86_400) / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${Math.max(1, minutes)}m`;
+}
+
+function isActive(status: object) {
+  return Object.prototype.hasOwnProperty.call(status, "active");
+}
+
+function circleAddressFromInput(value: string) {
+  const input = value.trim();
+  try {
+    const url = new URL(input);
+    return url.searchParams.get("circle") ?? url.pathname.split("/").filter(Boolean).at(-1) ?? input;
+  } catch {
+    return input;
+  }
+}
 
 export default function Home() {
-  const [connected, setConnected] = useState(false);
-  const [toast, setToast] = useState("");
-  const connect = () => {
-    setConnected(true);
-    setToast("Wallet connected for this demo");
-    window.setTimeout(() => setToast(""), 2800);
-  };
+  const { connection } = useConnection();
+  const {
+    client,
+    circles,
+    memberships,
+    score,
+    tokenBalance,
+    loading,
+    error,
+    refresh,
+    wallet,
+  } = useCircleData();
+  const [selectedAddress, setSelectedAddress] = useState("");
+  const [selectedMembers, setSelectedMembers] = useState<
+    CircleMembership["member"][]
+  >([]);
+  const [potAmount, setPotAmount] = useState(0n);
+  const [dialog, setDialog] = useState<"create" | "join" | null>(null);
+  const [circleAddressInput, setCircleAddressInput] = useState("");
+  const [circleName, setCircleName] = useState("");
+  const [contribution, setContribution] = useState("10");
+  const [periodDays, setPeriodDays] = useState("7");
+  const [maxMembers, setMaxMembers] = useState("5");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [noticeError, setNoticeError] = useState(false);
+  const [shareReady, setShareReady] = useState(false);
+
+  const selectedCircle = useMemo(
+    () => circles.find(({ address }) => address.toBase58() === selectedAddress),
+    [circles, selectedAddress]
+  );
+  const selectedMembership = useMemo(
+    () =>
+      memberships.find(
+        ({ circleAddress }) => circleAddress.toBase58() === selectedAddress
+      ),
+    [memberships, selectedAddress]
+  );
+  const selectedMember = selectedMembership?.member;
+  const activeCount = circles.filter(({ account }) =>
+    isActive(account.status)
+  ).length;
+  const totalMembers = circles.reduce(
+    (sum, row) => sum + row.account.memberCount,
+    0
+  );
+
+  useEffect(() => {
+    if (!selectedAddress && memberships.length) {
+      setSelectedAddress(memberships[0].circleAddress.toBase58());
+    } else if (!selectedAddress && circles.length) {
+      setSelectedAddress(circles[0].address.toBase58());
+    }
+  }, [circles, memberships, selectedAddress]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSelected() {
+      if (!selectedCircle) {
+        setSelectedMembers([]);
+        setPotAmount(0n);
+        return;
+      }
+      try {
+        const [members, vault] = await Promise.all([
+          client.listMembers(selectedCircle.address),
+          getAccount(
+            connection,
+            client.vault("pot", selectedCircle.address),
+            "confirmed"
+          ).catch(() => null),
+        ]);
+        if (cancelled) return;
+        setSelectedMembers(members.map(({ account }) => account));
+        setPotAmount(vault?.amount ?? 0n);
+      } catch {
+        if (!cancelled) {
+          setSelectedMembers([]);
+          setPotAmount(0n);
+        }
+      }
+    }
+    void loadSelected();
+    return () => {
+      cancelled = true;
+    };
+  }, [client, connection, selectedCircle]);
+
+  const showNotice = useCallback((message: string, isError = false) => {
+    setNotice(message);
+    setNoticeError(isError);
+    window.setTimeout(() => setNotice(""), 5200);
+  }, []);
+
+  const sendInstruction = useCallback(
+    async (label: string, instruction: anchor.web3.TransactionInstruction) => {
+      if (!wallet.publicKey || !wallet.sendTransaction) {
+        throw new Error("Connect a wallet first");
+      }
+      setBusy(true);
+      setShareReady(false);
+      setNotice(`${label}, approve the request in your wallet`);
+      setNoticeError(false);
+      try {
+        const signature = await wallet.sendTransaction(
+          new Transaction().add(instruction),
+          connection
+        );
+        setNotice(`${label}, waiting for confirmation`);
+        await connection.confirmTransaction(signature, "confirmed");
+        await refresh();
+        setShareReady(true);
+        showNotice(`${label} is confirmed`);
+        return signature;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [connection, refresh, showNotice, wallet]
+  );
+
+  async function createCircle(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!wallet.publicKey) {
+      showNotice("Connect your wallet to create a circle.", true);
+      return;
+    }
+    const amount = Math.round(Number(contribution) * 10 ** decimals);
+    const membersCount = Number(maxMembers);
+    const days = Number(periodDays);
+    if (
+      !circleName.trim() ||
+      circleName.length > 32 ||
+      amount <= 0 ||
+      days < 1 ||
+      membersCount < 3 ||
+      membersCount > 12
+    ) {
+      showNotice(
+        "Enter a name, positive amount, period of at least one day, and 3 to 12 members.",
+        true
+      );
+      return;
+    }
+    try {
+      const circleId = BigInt(Math.floor(Date.now() / 1000));
+      const address = client.circle(wallet.publicKey, circleId);
+      const currentConfig = await client.fetchConfig();
+      const baseAccounts = {
+        creator: wallet.publicKey,
+        config: client.config,
+        mint: currentConfig.mint,
+        circle: address,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      };
+      await sendInstruction(
+        "Circle created",
+        await client.createCircle(
+          circleId,
+          circleName.trim(),
+          amount,
+          days * 86_400,
+          membersCount,
+          baseAccounts
+        )
+      );
+      await sendInstruction(
+        "Pot opened",
+        await client.initializePotVault({
+          creator: wallet.publicKey,
+          circle: address,
+          mint: currentConfig.mint,
+          potVault: client.vault("pot", address),
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+      );
+      await sendInstruction(
+        "Deposit account opened",
+        await client.initializeDepositVault({
+          creator: wallet.publicKey,
+          circle: address,
+          mint: currentConfig.mint,
+          depositVault: client.vault("deposit", address),
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+      );
+      setSelectedAddress(address.toBase58());
+      setCircleName("");
+      setDialog(null);
+      await refresh();
+    } catch (cause) {
+      showNotice(friendlyError(cause), true);
+    }
+  }
+
+  async function joinCircle(addressText: string) {
+    if (!wallet.publicKey) {
+      showNotice("Connect your wallet to choose a turn.", true);
+      return;
+    }
+    try {
+      const address = new anchor.web3.PublicKey(circleAddressFromInput(addressText));
+      const circle = await client.fetchCircle(address);
+      const currentConfig = await client.fetchConfig();
+      const source = await getAssociatedTokenAddress(
+        currentConfig.mint,
+        wallet.publicKey
+      );
+      const sourceAccount = await getAccount(
+        connection,
+        source,
+        "confirmed"
+      ).catch(() => null);
+      if (!sourceAccount) {
+        throw new Error("This wallet does not have a test USDC account yet.");
+      }
+      let slot = -1;
+      for (let index = 0; index < circle.maxMembers; index += 1) {
+        if ((circle.slotsTaken & (1 << index)) === 0) {
+          slot = index;
+          break;
+        }
+      }
+      if (slot < 0) throw new Error("There are no turns left in this circle.");
+      const required =
+        BigInt(circle.contribution.toString()) *
+        BigInt(Math.max(1, circle.maxMembers - 1 - slot));
+      if (sourceAccount.amount < required) {
+        throw new Error(
+          `This turn needs ${amountText(
+            required
+          )} test USDC. This wallet has ${amountText(sourceAccount.amount)}.`
+        );
+      }
+      await sendInstruction(
+        "Turn chosen",
+        await client.joinCircle(slot, {
+          wallet: wallet.publicKey,
+          config: client.config,
+          circle: address,
+          member: client.member(address, wallet.publicKey),
+          source,
+          depositVault: client.vault("deposit", address),
+          mint: currentConfig.mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+      );
+      setSelectedAddress(address.toBase58());
+      setCircleAddressInput("");
+      setDialog(null);
+    } catch (cause) {
+      showNotice(friendlyError(cause), true);
+    }
+  }
+
+  async function payCurrentRound() {
+    if (!selectedCircle || !wallet.publicKey || !selectedMember) return;
+    try {
+      const currentConfig = await client.fetchConfig();
+      const source = await getAssociatedTokenAddress(
+        currentConfig.mint,
+        wallet.publicKey
+      );
+      const account = await getAccount(connection, source, "confirmed").catch(
+        () => null
+      );
+      const needed = BigInt(selectedCircle.account.contribution.toString());
+      if (!account || account.amount < needed) {
+        throw new Error(
+          `This payment needs ${amountText(
+            needed
+          )} test USDC. Check your wallet balance.`
+        );
+      }
+      await sendInstruction(
+        "Payment sent",
+        await client.contribute({
+          wallet: wallet.publicKey,
+          config: client.config,
+          circle: selectedCircle.address,
+          member: selectedMembership!.memberAddress,
+          source,
+          potVault: client.vault("pot", selectedCircle.address),
+          mint: currentConfig.mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+      );
+    } catch (cause) {
+      showNotice(friendlyError(cause), true);
+    }
+  }
+
+  async function coverMissingPayment() {
+    if (!selectedCircle || !wallet.publicKey) return;
+    const roundBit = 1 << selectedCircle.account.currentRound;
+    const missed = selectedMembers.find(
+      (member) =>
+        (member.paidBitmask & roundBit) === 0 &&
+        !member.wallet.equals(wallet.publicKey)
+    );
+    if (!missed) {
+      showNotice("Every member has paid or been covered this round.");
+      return;
+    }
+    try {
+      await sendInstruction(
+        "Payment covered",
+        await client.settleDefault({
+          caller: wallet.publicKey,
+          circle: selectedCircle.address,
+          member: client.member(selectedCircle.address, missed.wallet),
+          depositVault: client.vault("deposit", selectedCircle.address),
+          potVault: client.vault("pot", selectedCircle.address),
+          mint: selectedCircle.account.mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+      );
+    } catch (cause) {
+      showNotice(friendlyError(cause), true);
+    }
+  }
+
+  async function claimCurrentPayout() {
+    if (!selectedCircle || !wallet.publicKey) return;
+    const recipient = selectedMembers.find(
+      (member) => member.slot === selectedCircle.account.currentRound
+    );
+    if (!recipient) return;
+    try {
+      const currentConfig = await client.fetchConfig();
+      await sendInstruction(
+        "Pot claimed",
+        await client.claimPayout({
+          caller: wallet.publicKey,
+          config: client.config,
+          circle: selectedCircle.address,
+          recipientMember: client.member(
+            selectedCircle.address,
+            recipient.wallet
+          ),
+          recipientWallet: recipient.wallet,
+          potVault: client.vault("pot", selectedCircle.address),
+          depositVault: client.vault("deposit", selectedCircle.address),
+          treasury: currentConfig.treasury,
+          mint: currentConfig.mint,
+          recipientTokenAccount: await getAssociatedTokenAddress(
+            currentConfig.mint,
+            recipient.wallet
+          ),
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+      );
+    } catch (cause) {
+      showNotice(friendlyError(cause), true);
+    }
+  }
+
+  async function withdrawDeposit() {
+    if (!selectedCircle || !wallet.publicKey || !selectedMembership) return;
+    try {
+      const currentConfig = await client.fetchConfig();
+      const destination = await getAssociatedTokenAddress(
+        currentConfig.mint,
+        wallet.publicKey
+      );
+      await sendInstruction(
+        "Deposit returned",
+        await client.withdrawDeposit({
+          wallet: wallet.publicKey,
+          circle: selectedCircle.address,
+          member: selectedMembership.memberAddress,
+          depositVault: client.vault("deposit", selectedCircle.address),
+          destination,
+          mint: currentConfig.mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+      );
+    } catch (cause) {
+      showNotice(friendlyError(cause), true);
+    }
+  }
+
+  async function finalizeScore() {
+    if (!selectedCircle || !wallet.publicKey || !selectedMembership) return;
+    try {
+      await sendInstruction(
+        "Ajo Score updated",
+        await client.finalizeScore({
+          caller: wallet.publicKey,
+          circle: selectedCircle.address,
+          member: selectedMembership.memberAddress,
+          score: client.score(wallet.publicKey),
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+      );
+    } catch (cause) {
+      showNotice(friendlyError(cause), true);
+    }
+  }
+
+  async function copyInvite(address: string) {
+    await navigator.clipboard.writeText(
+      `${window.location.origin}/?circle=${address}`
+    );
+    showNotice("Invite link copied.");
+  }
+
+  async function shareInvite(address: string, name: string) {
+    const link = `${window.location.origin}/?circle=${address}`;
+    window.open(
+      `https://wa.me/?text=${encodeURIComponent(
+        `Join my savings circle, ${name}: ${link}`
+      )}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  }
+
+  useEffect(() => {
+    const invite = new URLSearchParams(window.location.search).get("circle");
+    if (invite) setCircleAddressInput(invite);
+  }, []);
+
+  const nextPayment = memberships
+    .map((membership) => ({
+      membership,
+      deadline:
+        BigInt(membership.circle.roundStartTs.toString()) +
+        BigInt(membership.circle.periodSecs.toString()),
+    }))
+    .filter(
+      ({ membership }) =>
+        isActive(membership.circle.status) &&
+        (membership.member.paidBitmask &
+          (1 << membership.circle.currentRound)) ===
+          0
+    )
+    .sort((left, right) =>
+      left.deadline < right.deadline
+        ? -1
+        : left.deadline > right.deadline
+        ? 1
+        : 0
+    )[0];
+
+  const ringMembers = selectedMembers.map((member) => ({
+    wallet: member.wallet.toBase58(),
+    slot: member.slot,
+    paid:
+      (member.paidBitmask &
+        (1 << (selectedCircle?.account.currentRound ?? 0))) !==
+      0,
+    missed: member.defaults > 0,
+  }));
+  const selectedIsActive = selectedCircle
+    ? isActive(selectedCircle.account.status)
+    : false;
+  const roundComplete =
+    selectedCircle?.account.contributionsThisRound ===
+    selectedCircle?.account.memberCount;
+  const memberTurn =
+    selectedMember?.slot === selectedCircle?.account.currentRound;
+  const isRecipient =
+    selectedMembership?.member.slot === selectedCircle?.account.currentRound;
+  const selectedComplete =
+    selectedCircle &&
+    Object.prototype.hasOwnProperty.call(
+      selectedCircle.account.status,
+      "completed"
+    );
+  const explorerLink = selectedAddress
+    ? `${explorerBase}/${selectedAddress}?cluster=devnet`
+    : "";
+
   return (
     <main className="site-shell">
       <header className="topbar">
-        <a className="brand" href="#top">
+        <a className="brand" href="#top" aria-label="Ajo Circles home">
           <span className="brand-mark">A</span>
           <span>Ajo Circles</span>
         </a>
         <nav className="nav" aria-label="Main navigation">
-          <a href="#how">How it works</a>
-          <a href="#circles">My circles</a>
+          <a href="#circles">Circles</a>
+          <a href="#directory">Open circles</a>
           <a href="#score">Ajo Score</a>
-          <button className="button button-primary" onClick={connect}>
-            {connected ? "Connected" : "Connect wallet"}
-          </button>
+          <WalletMultiButton className="wallet-button" />
         </nav>
       </header>
-      <section className="hero" id="top">
-        <div className="hero-copy">
-          <span className="eyebrow">Save together, safely</span>
-          <h1>Your people. Your pot. Your turn.</h1>
-          <p>
-            Ajo Circles brings the savings circle you already trust onto Solana,
-            with clear turns, protected payments and a track record you own.
-          </p>
-          <div className="hero-actions">
-            <button className="button button-gold" onClick={connect}>
-              Start a circle
-            </button>
-            <a className="text-link" href="#how">
-              See how it works <span aria-hidden="true">↗</span>
-            </a>
-          </div>
-          <div className="hero-note">
-            <span className="pulse" aria-hidden="true" /> Live on Solana devnet,
-            built for everyday saving
-          </div>
+
+      <section className="app-heading" id="top">
+        <div>
+          <span className="eyebrow">Solana devnet</span>
+          <h1>Save together.</h1>
+          <p>Clear turns, protected payments, your own record.</p>
         </div>
-        <div className="hero-art">
-          <CircleRing />
+        <div className="heading-actions">
+          <button
+            className="button button-quiet"
+            onClick={() => void refresh()}
+            disabled={loading}
+            title="Refresh chain data"
+          >
+            <RefreshCw size={17} className={loading ? "spin" : ""} />
+            <span>Refresh</span>
+          </button>
+          <button
+            className="button button-primary"
+            onClick={() => setDialog("create")}
+          >
+            <Plus size={18} /> Create circle
+          </button>
         </div>
       </section>
-      <section className="stats" aria-label="Ajo Circles live stats">
+
+      <section className="stats" aria-label="Live network totals">
         <div className="stats-inner">
           <div className="stat">
-            <strong>128</strong>
-            <span>circles created</span>
+            <strong>{loading ? "..." : circles.length}</strong>
+            <span>circles on chain</span>
           </div>
           <div className="stat">
-            <strong>$42.8k</strong>
-            <span>saved together</span>
+            <strong>{loading ? "..." : activeCount}</strong>
+            <span>active circles</span>
           </div>
           <div className="stat">
-            <strong>684</strong>
-            <span>payouts made</span>
+            <strong>{loading ? "..." : totalMembers}</strong>
+            <span>member places</span>
           </div>
           <div className="stat">
-            <strong>31</strong>
-            <span>payments covered</span>
+            <strong>
+              {tokenBalance === null
+                ? "Connect"
+                : `${amountText(tokenBalance)} USDC`}
+            </strong>
+            <span>your test balance</span>
           </div>
         </div>
       </section>
-      <section className="section" id="how">
-        <div className="section-head">
-          <div>
-            <span className="eyebrow">A better way to save</span>
-            <h2>The trust is in the rules.</h2>
-          </div>
-          <p>
-            Everyone knows what they put in, when they get paid and how the
-            circle handles a missed payment. The contract keeps the record.
-          </p>
+
+      {error && (
+        <div className="network-error" role="alert">
+          <CircleHelp size={18} /> Chain data could not be loaded. Check your
+          connection and refresh.
         </div>
-        <div className="steps">
-          <article className="step-card">
-            <span className="step-number">01</span>
-            <h3>Pick your turn</h3>
-            <p>
-              Choose when you want to receive the pot. Earlier turns have a
-              larger deposit, because they carry more risk.
-            </p>
-          </article>
-          <article className="step-card">
-            <span className="step-number">02</span>
-            <h3>Pay your share</h3>
-            <p>
-              Make one clear payment each round. Everyone can see the circle
-              move forward without seeing private wallet details.
-            </p>
-          </article>
-          <article className="step-card">
-            <span className="step-number">03</span>
-            <h3>Get your future back</h3>
-            <p>
-              When the circle ends, unused deposits return to their owners and
-              your Ajo Score records the journey.
-            </p>
-          </article>
-        </div>
-      </section>
-      <section className="dashboard" id="circles">
-        <div className="dashboard-grid">
-          <div>
-            <span className="eyebrow">Your progress</span>
-            <h2>Small steps make a strong record.</h2>
-            <p className="hero-copy">
-              <span>
-                See every circle, every turn and every payment in one calm
-                place.
-              </span>
-            </p>
-            <button className="button button-primary" onClick={connect}>
-              View my circles
-            </button>
-          </div>
-          <div className="circle-list">
-            <div className="score-card" id="score">
-              <div className="score-top">
-                <div>
-                  <span className="eyebrow">Your Ajo Score</span>
-                  <p>Onchain savings history</p>
-                </div>
-                <div className="score-number">742</div>
-              </div>
-              <div className="score-line">
-                <span />
-              </div>
-              <p>
-                3 circles completed, 28 payments made on time and no missed
-                turns.
-              </p>
+      )}
+
+      <section className="workspace" id="circles">
+        <div className="workspace-main">
+          <div className="section-head compact-head">
+            <div>
+              <span className="eyebrow">Your circles</span>
+              <h2>Circle activity</h2>
             </div>
-            <article className="circle-card">
+            {wallet.publicKey && (
+              <span className="wallet-address">
+                <Wallet size={15} />{" "}
+                {compactAddress(wallet.publicKey.toBase58())}
+              </span>
+            )}
+          </div>
+
+          {!wallet.publicKey ? (
+            <div className="empty-state">
+              <div className="empty-mark">
+                <Users size={24} />
+              </div>
+              <h3>Connect to see your circles</h3>
+              <p>
+                Your turns, payments, deposits, and Ajo Score will appear here.
+              </p>
+              <WalletMultiButton className="wallet-button" />
+            </div>
+          ) : loading ? (
+            <div className="loading-state">
+              <span className="loader" /> Reading your circles from devnet
+            </div>
+          ) : memberships.length === 0 ? (
+            <div className="empty-state compact-empty">
+              <div className="empty-mark">
+                <Users size={24} />
+              </div>
+              <h3>No circles yet</h3>
+              <p>Browse an open circle or create one for your group.</p>
+              <button
+                className="button button-gold"
+                onClick={() => setDialog("create")}
+              >
+                <Plus size={17} /> Create circle
+              </button>
+            </div>
+          ) : (
+            <div className="circle-table" role="list">
+              {memberships.map(
+                ({ memberAddress, member, circleAddress, circle }) => {
+                  const active = isActive(circle.status);
+                  const due =
+                    active &&
+                    (member.paidBitmask & (1 << circle.currentRound)) === 0;
+                  const selected = selectedAddress === circleAddress.toBase58();
+                  return (
+                    <button
+                      className={`circle-row ${
+                        selected ? "circle-row-selected" : ""
+                      }`}
+                      key={memberAddress.toBase58()}
+                      onClick={() =>
+                        setSelectedAddress(circleAddress.toBase58())
+                      }
+                      role="listitem"
+                    >
+                      <span className="circle-row-icon">
+                        {circle.name.slice(0, 1).toUpperCase()}
+                      </span>
+                      <span className="circle-row-copy">
+                        <strong>{circle.name}</strong>
+                        <small>
+                          {active
+                            ? `Round ${Math.min(
+                                circle.currentRound + 1,
+                                circle.maxMembers
+                              )} of ${circle.maxMembers}`
+                            : statusName(circle.status)}
+                        </small>
+                      </span>
+                      <span
+                        className={`state-pill ${
+                          due ? "state-due" : active ? "state-current" : ""
+                        }`}
+                      >
+                        {due
+                          ? "Payment due"
+                          : active
+                          ? "On track"
+                          : statusName(circle.status)}
+                      </span>
+                      <span className="circle-row-amount">
+                        {amountText(circle.contribution.toString())}
+                        <small>USDC</small>
+                      </span>
+                      <ArrowUpRight size={17} className="row-arrow" />
+                    </button>
+                  );
+                }
+              )}
+            </div>
+          )}
+
+          <div className="action-line">
+            <button
+              className="button button-outline"
+              onClick={() => setDialog("join")}
+            >
+              <ArrowUpRight size={17} /> Join with a circle link
+            </button>
+            {nextPayment && (
+              <span className="due-note">
+                <Clock3 size={15} /> Next payment{" "}
+                {deadlineText(nextPayment.deadline)}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <aside className="score-panel" id="score">
+          <div className="score-panel-head">
+            <div>
+              <span className="eyebrow">Your record</span>
+              <h2>Ajo Score</h2>
+            </div>
+            <ShieldCheck size={21} />
+          </div>
+          {!wallet.publicKey ? (
+            <p className="muted-copy">
+              Connect a wallet to read its public score.
+            </p>
+          ) : score ? (
+            <>
+              <div className="score-number">
+                {score.circlesCompleted}
+                <small> circles complete</small>
+              </div>
+              <div className="score-facts">
+                <span>
+                  {score.roundsPaidOnTime.toString()}
+                  <small>payments on time</small>
+                </span>
+                <span>
+                  {score.roundsDefaulted.toString()}
+                  <small>defaults</small>
+                </span>
+              </div>
+              <p className="muted-copy">
+                This record is read from your wallet’s Ajo Score account.
+              </p>
+            </>
+          ) : (
+            <p className="muted-copy">
+              No score recorded yet. Complete a circle to start your history.
+            </p>
+          )}
+          {selectedComplete &&
+            selectedMembership &&
+            !selectedMembership.member.scoreRecorded && (
+              <button
+                className="button button-gold score-action"
+                onClick={() => void finalizeScore()}
+                disabled={busy}
+              >
+                <Check size={17} /> Update my Ajo Score
+              </button>
+            )}
+        </aside>
+      </section>
+
+      <section className="selected-circle" aria-labelledby="selected-title">
+        <div className="selected-head">
+          <div>
+            <span className="eyebrow">Selected circle</span>
+            <h2 id="selected-title">
+              {selectedCircle?.account.name ?? "Choose a circle"}
+            </h2>
+            {selectedCircle && (
+              <p>
+                {compactAddress(selectedCircle.address.toBase58())}{" "}
+                <a
+                  href={explorerLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="View circle on Solana explorer"
+                >
+                  <ExternalLink size={14} />
+                </a>
+              </p>
+            )}
+          </div>
+          {selectedCircle && (
+            <button
+              className="icon-button"
+              onClick={() => void copyInvite(selectedCircle.address.toBase58())}
+              title="Copy invite link"
+            >
+              <Copy size={17} />
+            </button>
+          )}
+        </div>
+        <div className="selected-layout">
+          <div className="ring-stage">
+            <CircleRing
+              circle={selectedCircle?.account ?? null}
+              members={ringMembers}
+              potAmount={potAmount}
+            />
+          </div>
+          <div className="selected-details">
+            <div className="detail-stats">
               <div>
-                <h3>Sunday Supper Club</h3>
-                <p>Round 3 of 5, your payment is due today</p>
+                <span>Contribution</span>
+                <strong>
+                  {selectedCircle
+                    ? `${amountText(
+                        selectedCircle.account.contribution.toString()
+                      )} USDC`
+                    : "—"}
+                </strong>
               </div>
-              <div className="circle-amount">
-                $10.00<small>Pay now</small>
-              </div>
-            </article>
-            <article className="circle-card">
               <div>
-                <h3>Market Women United</h3>
-                <p>Completed, deposit ready to withdraw</p>
+                <span>Members</span>
+                <strong>
+                  {selectedCircle
+                    ? `${selectedCircle.account.memberCount} / ${selectedCircle.account.maxMembers}`
+                    : "—"}
+                </strong>
               </div>
-              <div className="circle-amount">
-                $40.00<small>Withdraw</small>
+              <div>
+                <span>Payment window</span>
+                <strong>
+                  {selectedCircle
+                    ? deadlineText(
+                        BigInt(selectedCircle.account.roundStartTs.toString()) +
+                          BigInt(selectedCircle.account.periodSecs.toString())
+                      )
+                    : "—"}
+                </strong>
               </div>
-            </article>
+              <div>
+                <span>Your deposit</span>
+                <strong>
+                  {selectedMembership
+                    ? `${amountText(
+                        selectedMembership.member.depositRemaining.toString()
+                      )} USDC`
+                    : "Not joined"}
+                </strong>
+              </div>
+            </div>
+            <div className="primary-action-row">
+              {selectedMembership &&
+                selectedIsActive &&
+                !selectedMembership.member.depositWithdrawn && (
+                  <button
+                    className="button button-gold"
+                    onClick={() => void payCurrentRound()}
+                    disabled={
+                      busy ||
+                      (selectedMembership.member.paidBitmask &
+                        (1 << (selectedCircle?.account.currentRound ?? 0))) !==
+                        0
+                    }
+                  >
+                    <ArrowUpRight size={17} /> Pay this round
+                  </button>
+                )}
+              {selectedIsActive && wallet.publicKey && (
+                <button
+                  className="button button-outline"
+                  onClick={() => void coverMissingPayment()}
+                  disabled={busy || roundComplete}
+                >
+                  <ShieldCheck size={17} /> Cover a payment
+                </button>
+              )}
+              {selectedIsActive && roundComplete && isRecipient && (
+                <button
+                  className="button button-primary"
+                  onClick={() => void claimCurrentPayout()}
+                  disabled={busy}
+                >
+                  <ArrowDownToLine size={17} /> Receive the pot
+                </button>
+              )}
+              {selectedComplete &&
+                selectedMembership &&
+                !selectedMembership.member.depositWithdrawn && (
+                  <button
+                    className="button button-primary"
+                    onClick={() => void withdrawDeposit()}
+                    disabled={busy}
+                  >
+                    <ArrowDownToLine size={17} /> Withdraw my deposit
+                  </button>
+                )}
+              {!selectedCircle && (
+                <span className="muted-copy">
+                  Open a circle to see its live turns here.
+                </span>
+              )}
+            </div>
+            {selectedCircle && (
+              <div className="member-status-line">
+                <span>
+                  <i className="status-dot paid-dot" />{" "}
+                  {
+                    selectedMembers.filter(
+                      (member) =>
+                        (member.paidBitmask &
+                          (1 << selectedCircle.account.currentRound)) !==
+                        0
+                    ).length
+                  }{" "}
+                  settled this round
+                </span>
+                <span>
+                  <i className="status-dot waiting-dot" />{" "}
+                  {
+                    selectedMembers.filter(
+                      (member) =>
+                        (member.paidBitmask &
+                          (1 << selectedCircle.account.currentRound)) ===
+                        0
+                    ).length
+                  }{" "}
+                  still due
+                </span>
+              </div>
+            )}
+            {selectedCircle && shareReady && (
+              <button
+                className="whatsapp-link"
+                onClick={() =>
+                  void shareInvite(
+                    selectedCircle.address.toBase58(),
+                    selectedCircle.account.name
+                  )
+                }
+              >
+                Share on WhatsApp <ArrowUpRight size={15} />
+              </button>
+            )}
           </div>
         </div>
       </section>
+
+      <section className="directory" id="directory">
+        <div className="section-head compact-head">
+          <div>
+            <span className="eyebrow">Onchain directory</span>
+            <h2>Open circles</h2>
+          </div>
+          <span className="directory-count">
+            {
+              circles.filter(
+                ({ account }) =>
+                  !Object.prototype.hasOwnProperty.call(
+                    account.status,
+                    "completed"
+                  ) &&
+                  !Object.prototype.hasOwnProperty.call(
+                    account.status,
+                    "cancelled"
+                  )
+              ).length
+            }{" "}
+            listed
+          </span>
+        </div>
+        {circles.length === 0 ? (
+          <div className="directory-empty">
+            No circles have been created on this network yet.
+          </div>
+        ) : (
+          <div className="directory-grid">
+            {circles
+              .filter(
+                ({ account }) =>
+                  !Object.prototype.hasOwnProperty.call(
+                    account.status,
+                    "completed"
+                  ) &&
+                  !Object.prototype.hasOwnProperty.call(
+                    account.status,
+                    "cancelled"
+                  )
+              )
+              .map(({ address, account }) => {
+                const spots = account.maxMembers - account.memberCount;
+                return (
+                  <article className="directory-row" key={address.toBase58()}>
+                    <div className="directory-name">
+                      <span className="circle-row-icon">
+                        {account.name.slice(0, 1).toUpperCase()}
+                      </span>
+                      <div>
+                        <h3>{account.name}</h3>
+                        <p>
+                          {compactAddress(address.toBase58())} ·{" "}
+                          {statusName(account.status)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="directory-value">
+                      <strong>
+                        {amountText(account.contribution.toString())} USDC
+                      </strong>
+                      <span>
+                        {spots} {spots === 1 ? "turn" : "turns"} open
+                      </span>
+                    </div>
+                    {spots > 0 ? (
+                      <button
+                        className="button button-outline"
+                        onClick={() => {
+                          setSelectedAddress(address.toBase58());
+                          setCircleAddressInput(address.toBase58());
+                          setDialog("join");
+                        }}
+                      >
+                        View and join
+                      </button>
+                    ) : (
+                      <span className="full-label">Full</span>
+                    )}
+                  </article>
+                );
+              })}
+          </div>
+        )}
+      </section>
+
       <footer className="footer">
-        <span>© 2026 Ajo Circles</span>
-        <span>Built for communities that save together</span>
+        <span>Ajo Circles</span>
+        <a
+          href={`${explorerBase}/${client.programId.toBase58()}?cluster=devnet`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Program on Solana Explorer <ExternalLink size={13} />
+        </a>
+        <span>Devnet test token</span>
       </footer>
-      {toast && (
-        <div className="toast" role="status">
-          {toast}
+
+      {dialog && (
+        <div
+          className="dialog-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setDialog(null);
+          }}
+        >
+          <motion.section
+            className="dialog-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dialog-title"
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <div className="dialog-head">
+              <div>
+                <span className="eyebrow">
+                  {dialog === "create" ? "New savings group" : "Choose a turn"}
+                </span>
+                <h2 id="dialog-title">
+                  {dialog === "create" ? "Create a circle" : "Join a circle"}
+                </h2>
+              </div>
+              <button
+                className="icon-button"
+                aria-label="Close dialog"
+                onClick={() => setDialog(null)}
+              >
+                <X size={19} />
+              </button>
+            </div>
+            {dialog === "create" ? (
+              <form
+                className="circle-form"
+                onSubmit={(event) => void createCircle(event)}
+              >
+                <label>
+                  Circle name
+                  <input
+                    value={circleName}
+                    maxLength={32}
+                    onChange={(event) => setCircleName(event.target.value)}
+                    placeholder="For example, Sunday group"
+                    required
+                  />
+                </label>
+                <div className="form-row">
+                  <label>
+                    Contribution per round
+                    <input
+                      inputMode="decimal"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={contribution}
+                      onChange={(event) => setContribution(event.target.value)}
+                      required
+                    />
+                    <small>USDC</small>
+                  </label>
+                  <label>
+                    Members
+                    <select
+                      value={maxMembers}
+                      onChange={(event) => setMaxMembers(event.target.value)}
+                    >
+                      {Array.from({ length: 10 }, (_, index) => index + 3).map(
+                        (count) => (
+                          <option key={count} value={count}>
+                            {count}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </label>
+                </div>
+                <label>
+                  Days between payments
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={periodDays}
+                    onChange={(event) => setPeriodDays(event.target.value)}
+                    required
+                  />
+                </label>
+                <div className="deposit-note">
+                  <ShieldCheck size={17} />
+                  <span>
+                    The deposit is larger for earlier turns and returns after
+                    the circle is complete.
+                  </span>
+                </div>
+                <button
+                  className="button button-primary form-submit"
+                  disabled={busy || !wallet.publicKey}
+                >
+                  {busy ? "Waiting for wallet" : "Create circle"}
+                </button>
+              </form>
+            ) : (
+              <form
+                className="circle-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void joinCircle(circleAddressInput);
+                }}
+              >
+                <label>
+                  Circle link or address
+                  <input
+                    value={circleAddressInput}
+                    onChange={(event) =>
+                      setCircleAddressInput(event.target.value)
+                    }
+                    placeholder="Paste an invite link or circle address"
+                    required
+                  />
+                </label>
+                {selectedCircle && (
+                  <div className="join-preview">
+                    <strong>{selectedCircle.account.name}</strong>
+                    <span>
+                      {selectedCircle.account.memberCount} of{" "}
+                      {selectedCircle.account.maxMembers} turns chosen
+                    </span>
+                    <span>
+                      {amountText(
+                        selectedCircle.account.contribution.toString()
+                      )}{" "}
+                      USDC per round
+                    </span>
+                  </div>
+                )}
+                {tokenBalance !== null && tokenBalance === 0n && (
+                  <p className="form-help">
+                    This wallet has no test USDC yet. Test funds are issued to
+                    approved devnet wallets.
+                  </p>
+                )}
+                <button
+                  className="button button-primary form-submit"
+                  disabled={busy || !wallet.publicKey}
+                >
+                  {busy ? "Waiting for wallet" : "Choose an open turn"}
+                </button>
+              </form>
+            )}
+          </motion.section>
+        </div>
+      )}
+
+      {notice && (
+        <div
+          className={`toast ${noticeError ? "toast-error" : ""}`}
+          role="status"
+        >
+          {notice}
+          {shareReady && <Check size={16} />}
         </div>
       )}
     </main>

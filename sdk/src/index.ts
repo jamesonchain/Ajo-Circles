@@ -1,10 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import type { AjoCircles } from "./idl/ajo_circles.js";
+import { IDL } from "./idl/ajo_circles_idl.js";
 import { PublicKey, TransactionInstruction } from "@solana/web3.js";
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
-const IDL = require("./idl/ajo_circles.json") as AjoCircles;
 
 export { IDL };
 export type { AjoCircles };
@@ -336,7 +333,7 @@ export function createAjoCirclesClient(
   provider: anchor.Provider
 ): AjoCirclesClient {
   return new AjoCirclesClient(
-    new anchor.Program<AjoCircles>(IDL as AjoCircles, provider)
+    new anchor.Program<AjoCircles>(IDL as unknown as AjoCircles, provider)
   );
 }
 
