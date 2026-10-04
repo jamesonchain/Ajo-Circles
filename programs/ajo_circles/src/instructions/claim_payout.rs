@@ -1,5 +1,5 @@
 use crate::{
-    constants::{CIRCLE_SEED, CONFIG_SEED, MEMBER_SEED, POT_SEED},
+    constants::{CIRCLE_SEED, CONFIG_SEED, DEPOSIT_SEED, MEMBER_SEED, POT_SEED},
     error::ErrorCode,
     events::{CircleCompleted, PayoutClaimed, PayoutForfeited},
     state::{Circle, CircleStatus, Config, Member},
@@ -24,6 +24,8 @@ pub struct ClaimPayout<'info> {
     pub recipient_wallet: SystemAccount<'info>,
     #[account(mut, seeds = [POT_SEED, circle.key().as_ref()], bump, constraint = pot_vault.mint == circle.mint @ ErrorCode::MintMismatch)]
     pub pot_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, seeds = [DEPOSIT_SEED, circle.key().as_ref()], bump, constraint = deposit_vault.mint == circle.mint @ ErrorCode::MintMismatch)]
+    pub deposit_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, address = config.treasury, constraint = treasury.mint == circle.mint @ ErrorCode::MintMismatch)]
     pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(address = circle.mint)]
@@ -40,16 +42,16 @@ pub fn process(ctx: Context<ClaimPayout>) -> Result<()> {
     require!(c.status.active(), ErrorCode::CircleNotActive);
     require!(c.member_count == c.max_members, ErrorCode::CircleNotFull);
     require!(
+        !ctx.accounts.recipient_member.received,
+        ErrorCode::PayoutAlreadyClaimed
+    );
+    require!(
         c.contributions_this_round == c.member_count,
         ErrorCode::PayoutNotReady
     );
     require!(
         ctx.accounts.recipient_member.slot == c.current_round,
         ErrorCode::WrongRecipient
-    );
-    require!(
-        !ctx.accounts.recipient_member.received,
-        ErrorCode::PayoutAlreadyClaimed
     );
     let round = c.current_round;
     let pot_amount = ctx.accounts.pot_vault.amount;
@@ -61,6 +63,31 @@ pub fn process(ctx: Context<ClaimPayout>) -> Result<()> {
     ];
     let signer_seeds = [seeds];
     if ctx.accounts.recipient_member.defaults > 0 {
+        if pot_amount > 0 {
+            let cp = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.pot_vault.to_account_info(),
+                    mint: ctx.accounts.mint.to_account_info(),
+                    to: ctx.accounts.deposit_vault.to_account_info(),
+                    authority: c.to_account_info(),
+                },
+                &signer_seeds,
+            );
+            anchor_spl::token_interface::transfer_checked(
+                cp,
+                pot_amount,
+                ctx.accounts.mint.decimals,
+            )?;
+        }
+        c.forfeit_pool = c
+            .forfeit_pool
+            .checked_add(pot_amount)
+            .ok_or(ErrorCode::MathOverflow)?;
+        c.forfeit_total = c
+            .forfeit_total
+            .checked_add(pot_amount)
+            .ok_or(ErrorCode::MathOverflow)?;
         ctx.accounts.recipient_member.received = true;
         emit!(PayoutForfeited {
             circle: c.key(),
@@ -69,11 +96,12 @@ pub fn process(ctx: Context<ClaimPayout>) -> Result<()> {
             amount: pot_amount
         });
     } else {
-        let fee = pot_amount
-            .checked_mul(u64::from(ctx.accounts.config.fee_bps))
+        let fee_wide = u128::from(pot_amount)
+            .checked_mul(u128::from(ctx.accounts.config.fee_bps))
             .ok_or(ErrorCode::MathOverflow)?
             .checked_div(10_000)
             .ok_or(ErrorCode::MathOverflow)?;
+        let fee = u64::try_from(fee_wide).map_err(|_| ErrorCode::MathOverflow)?;
         let payout = pot_amount.checked_sub(fee).ok_or(ErrorCode::MathOverflow)?;
         if fee > 0 {
             let cp = CpiContext::new_with_signer(
@@ -122,11 +150,6 @@ pub fn process(ctx: Context<ClaimPayout>) -> Result<()> {
     if next_round >= c.max_members {
         c.current_round = c.max_members;
         c.status = CircleStatus::Completed;
-        c.forfeit_pool = if ctx.accounts.recipient_member.defaults > 0 {
-            pot_amount
-        } else {
-            0
-        };
         emit!(CircleCompleted {
             circle: c.key(),
             total_paid_out: c.total_paid_out,

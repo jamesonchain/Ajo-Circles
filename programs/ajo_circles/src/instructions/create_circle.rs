@@ -57,6 +57,7 @@ pub fn process(
     c.total_paid_out = 0;
     c.shortfall_total = 0;
     c.forfeit_pool = 0;
+    c.forfeit_total = 0;
     c.forfeit_claims = 0;
     c.eligible_members = 0;
     c.created_ts = Clock::get()?.unix_timestamp;

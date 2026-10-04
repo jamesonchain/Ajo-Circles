@@ -29,6 +29,7 @@ pub struct Circle {
     pub bump: u8,
     pub shortfall_total: u64,
     pub forfeit_pool: u64,
+    pub forfeit_total: u64,
     pub forfeit_claims: u8,
     pub eligible_members: u8,
 }

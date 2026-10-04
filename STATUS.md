@@ -2,6 +2,29 @@
 
 ## Current milestone
 
+The contract test milestone is complete locally. The program builds, the requested section 5.5 money paths and attack cases have integration coverage, and the full Anchor suite passed on a fresh local validator ledger.
+
+## Verified results
+
+`anchor build` completed successfully. The Anchor integration suite reported 12 passing tests and 0 failing tests in approximately 10 minutes. `pnpm exec tsc --noEmit`, `cargo fmt --all -- --check`, and `git diff --check` completed successfully. The required generated directories `test-ledger`, `.next`, `node_modules`, `.pnpm-store`, and `target` are ignored by Git and none are tracked.
+
+The suite covers the complete five member circle and fees, default settlement by a third party with exact deposit debit and payout accounting, an early slot zero walkaway, exhausted deposit shortfall and event values, forfeited payout reservation and exact eligible share distribution, and conservation after every balance changing step for circles with 3, 5, and 12 members. The attack matrix asserts exact errors for wrong mint, wrong vault, repeated contribution, repeated payout claim, occupied slot, contribution after the deadline, settlement before the deadline, settling a member who paid, premature withdrawal, repeated withdrawal, signer and member mismatch, and a payout token account owned by the wrong recipient. Boundary coverage includes 3 and 12 members, the configured minimum period, a one unit contribution with a fee rounded to zero, and a large contribution whose payout fee multiplication exceeds the prior 64 bit intermediate limit.
+
+The regression tests found and retained three contract fixes. A repeated payout claim now returns `PayoutAlreadyClaimed` before later round readiness checks. Forfeiture shares use the fixed `forfeit_total` rather than the decreasing `forfeit_pool`. Fee multiplication uses a 128 bit intermediate to avoid rejecting valid large payouts. The causes and fixes are recorded in `DECISIONS.md`.
+
+## Not yet done
+
+There is no `docs/MASTER_PROMPT_V2.md` file in the workspace or tracked repository, so its ordered milestones and rules cannot be followed until that plan is restored. Devnet deployment has not been attempted. The SDK is not yet independently published. The web app remains a foundation and is not yet connected to wallet transactions or live circle state. No independent security audit has been performed.
+
+The build emits existing Anchor macro configuration, glob re export, and deprecation warnings. They do not prevent the build or tests from passing.
+
+## Next
+
+Restore `docs/MASTER_PROMPT_V2.md` and review its deployment requirements. Then follow its next milestone in order. Do not treat devnet deployment as verified until a real deployment and program interaction succeed.
+# Status
+
+## Current milestone
+
 Milestone A is in progress. The settlement instruction surface now exists, the local money flow tests pass, and the SDK and web app foundations are in place.
 
 ## Works

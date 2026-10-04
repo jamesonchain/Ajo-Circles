@@ -1,5 +1,5 @@
 use crate::{
-    constants::{CIRCLE_SEED, MEMBER_SEED, POT_SEED},
+    constants::{CIRCLE_SEED, DEPOSIT_SEED, MEMBER_SEED},
     error::ErrorCode,
     state::{Circle, CircleStatus, Member},
 };
@@ -13,8 +13,8 @@ pub struct ClaimForfeitShare<'info> {
     pub circle: Account<'info, Circle>,
     #[account(mut, seeds = [MEMBER_SEED, circle.key().as_ref(), member.wallet.as_ref()], bump = member.bump, has_one = circle)]
     pub member: Account<'info, Member>,
-    #[account(mut, seeds = [POT_SEED, circle.key().as_ref()], bump, constraint = pot_vault.mint == circle.mint @ ErrorCode::MintMismatch)]
-    pub pot_vault: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut, seeds = [DEPOSIT_SEED, circle.key().as_ref()], bump, constraint = deposit_vault.mint == circle.mint @ ErrorCode::MintMismatch)]
+    pub deposit_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = destination.mint == circle.mint @ ErrorCode::MintMismatch, constraint = destination.owner == member.wallet @ ErrorCode::TokenOwnerMismatch)]
     pub destination: InterfaceAccount<'info, TokenAccount>,
     #[account(address = circle.mint)]
@@ -35,11 +35,11 @@ pub fn process(ctx: Context<ClaimForfeitShare>) -> Result<()> {
     );
     require!(c.eligible_members > 0, ErrorCode::NoForfeitShare);
     let base = c
-        .forfeit_pool
+        .forfeit_total
         .checked_div(u64::from(c.eligible_members))
         .ok_or(ErrorCode::MathOverflow)?;
     let remainder = c
-        .forfeit_pool
+        .forfeit_total
         .checked_rem(u64::from(c.eligible_members))
         .ok_or(ErrorCode::MathOverflow)?;
     let amount = base
@@ -60,7 +60,7 @@ pub fn process(ctx: Context<ClaimForfeitShare>) -> Result<()> {
     let cp = CpiContext::new_with_signer(
         ctx.accounts.token_program.to_account_info(),
         TransferChecked {
-            from: ctx.accounts.pot_vault.to_account_info(),
+            from: ctx.accounts.deposit_vault.to_account_info(),
             mint: ctx.accounts.mint.to_account_info(),
             to: ctx.accounts.destination.to_account_info(),
             authority: c.to_account_info(),

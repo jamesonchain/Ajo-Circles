@@ -14,6 +14,14 @@ The proc-macro2 1.0.94 compatibility pin was tried first, as required, but it st
 
 The stack safe circle creation flow remains split into state creation, pot vault creation, and deposit vault creation. New payout contexts are boxed as well because associated token account creation and multiple token accounts can exceed Solana's stack frame limit.
 
-Default cover transfers the smaller of the contribution and the member's remaining deposit. A shortfall is recorded on the circle and the round still advances once the default is settled. A member with any default forfeits the payout for that turn. The pot is not moved during the forfeiture, because later payouts may consume it. The actual remaining pot is snapshotted only when the circle completes and is then divided among members with zero defaults. Remainder units go to the first eligible claimants, so no token dust is lost.
+Default cover transfers the smaller of the contribution and the member's remaining deposit. A shortfall is recorded on the circle and the round still advances once the default is settled. A member with any default forfeits the payout for that turn. The program immediately moves that round's pot into the deposit vault so later payouts cannot consume it. At completion, `forfeit_total` is the fixed distribution basis and `forfeit_pool` tracks the amount still available. Members with zero defaults split the total, with remainder units going to the first eligible claimants.
 
 Protocol fees are rounded down in the smallest token unit. The treasury receives the fee before the recipient receives the remainder. The fee is capped at 2 percent and the current initialization default is 0.5 percent.
+
+The section 5.5 forfeiture test exposed that a forfeited payout remained in the pot and could be included in a later member's payout. The program now transfers that amount from the pot vault into the circle deposit vault, increments `forfeit_pool` immediately, and pays forfeiture shares from the reserved deposit vault balance. This keeps forfeited funds separate from future payouts and preserves exact token accounting through completion.
+
+The payout replay test exposed that a second claim during a later round returned `PayoutNotReady` before the program checked the member's `received` flag. The claim instruction now checks that flag before round readiness and recipient slot checks, so a replay returns the dedicated `PayoutAlreadyClaimed` error and cannot be confused with an unready payout.
+
+The long invariant test exposed that forfeiture shares were calculated from the shrinking unclaimed pool. That made later claims smaller and left tokens undistributed. Circle state now keeps the immutable `forfeit_total` for share calculations while decrementing `forfeit_pool` after each claim.
+
+The largest contribution payout test exposed that multiplying the pot by the fee basis points in `u64` overflowed before division, even when the final fee fit. Fee calculation now widens the multiplication to `u128` before converting the divided result back to `u64`.
