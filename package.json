@@ -2,6 +2,7 @@
   "license": "ISC",
   "type": "module",
   "scripts": {
+    "devnet:smoke": "node --loader ts-node/esm scripts/devnet-smoke.ts",
     "lint:fix": "prettier \"tests/**/*.ts\" \"migrations/**/*.ts\" \"*.json\" -w",
     "lint": "prettier \"tests/**/*.ts\" \"migrations/**/*.ts\" \"*.json\" --check"
   },

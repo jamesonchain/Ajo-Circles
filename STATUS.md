@@ -2,22 +2,26 @@
 
 ## Current milestone
 
-The contract test milestone is complete locally. The program builds, the requested section 5.5 money paths and attack cases have integration coverage, and the full Anchor suite passed on a fresh local validator ledger.
+Milestone A, contract, and Milestone A2, devnet deployment, are complete and verified. Milestone B, SDK, is next.
 
 ## Verified results
 
-`anchor build` completed successfully. The Anchor integration suite reported 12 passing tests and 0 failing tests in approximately 10 minutes. `pnpm exec tsc --noEmit`, `cargo fmt --all -- --check`, and `git diff --check` completed successfully. The required generated directories `test-ledger`, `.next`, `node_modules`, `.pnpm-store`, and `target` are ignored by Git and none are tracked.
+The full Anchor build passed. The integration suite passed with 12 tests and 0 failures on a fresh local validator ledger. The root TypeScript type check, Rust formatting check, and patch whitespace check passed. Generated build, package, and validator state folders are ignored by Git and none are tracked.
 
-The suite covers the complete five member circle and fees, default settlement by a third party with exact deposit debit and payout accounting, an early slot zero walkaway, exhausted deposit shortfall and event values, forfeited payout reservation and exact eligible share distribution, and conservation after every balance changing step for circles with 3, 5, and 12 members. The attack matrix asserts exact errors for wrong mint, wrong vault, repeated contribution, repeated payout claim, occupied slot, contribution after the deadline, settlement before the deadline, settling a member who paid, premature withdrawal, repeated withdrawal, signer and member mismatch, and a payout token account owned by the wrong recipient. Boundary coverage includes 3 and 12 members, the configured minimum period, a one unit contribution with a fee rounded to zero, and a large contribution whose payout fee multiplication exceeds the prior 64 bit intermediate limit.
+Tests cover the complete cycle, default settlement by a third party with exact deposit debit and payout accounting, an early slot zero walkaway, exhausted deposit shortfall and event values, forfeited payout reservation and exact eligible share distribution, score finalization, exact attack errors, boundary conditions, and conservation after each balance changing step for circles with 3, 5, and 12 members.
 
-The regression tests found and retained three contract fixes. A repeated payout claim now returns `PayoutAlreadyClaimed` before later round readiness checks. Forfeiture shares use the fixed `forfeit_total` rather than the decreasing `forfeit_pool`. Fee multiplication uses a 128 bit intermediate to avoid rejecting valid large payouts. The causes and fixes are recorded in `DECISIONS.md`.
+The tests found and retain three program fixes: payout replay error ordering, immutable forfeiture share calculation, and widened fee multiplication for large pots. See `DECISIONS.md` for the causes and fixes.
+
+The program is deployed to Solana devnet at `B7YcA9vqKUF2Gkj6Ct8AG71a3upQftd7VwPBV7qjn3cw`. The Anchor CLI deployment to devnet succeeded on October 4, 2026. The program account is executable, and its upgrade authority is the configured deployer `3thGwAqmDcUattjmSVUdRcvTdJenBVV1M5M5LuvuPWdD`.
+
+The `pnpm devnet:smoke` script created test mint `9qGJsamQ8irgapMSmEoR525GhD7DH4tFMsbtfUNHEvdb`, created circle `CU8i9Yg43chjyRL6qHbFcmoBXvvpoWKnxSb1V747KVpH`, initialized both vaults, joined three test wallets, and fetched the circle with member count 3. The repeat run also succeeded and printed the confirmed transaction signatures. Generated wallet keys are saved under the ignored `.devnet` directory. RPC airdrop failed once and the official faucet required a browser challenge that could not load, so the script funded wallets with transfers from the configured devnet deployer instead. No airdrop retry was made.
 
 ## Not Yet Verified
 
-The program has not been deployed to devnet. No devnet mint, wallet funding, create circle transaction, or join circle transaction has been verified. The SDK and web app are foundations only and are not complete against the master plan. No independent security audit has been performed.
+The SDK is not complete against Milestone B. The web app remains a foundation and is not connected to real wallet transactions or live circle state. A full savings cycle with a covered default has not been run on devnet. No independent security audit has been performed.
 
 The build emits existing Anchor macro configuration, glob re export, and deprecation warnings. They do not prevent the build or tests from passing.
 
 ## Next
 
-Complete Milestone A2. Deploy to devnet, record the program address, create scripts for a devnet test mint and funded wallets, and verify real create circle and join circle transactions. Never report devnet success until those transactions succeed. The full plan is in `docs/MASTER_PROMPT_V2.md`.
+Begin Milestone B. Complete and test the TypeScript SDK client methods, PDA helpers, account and event readers, Ajo Score reader, package example, published IDL and types, and unit tests. Run the full build and test suite, update this status, then commit and push the milestone. The full plan is in `docs/MASTER_PROMPT_V2.md`.

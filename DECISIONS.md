@@ -25,3 +25,5 @@ The payout replay test exposed that a second claim during a later round returned
 The long invariant test exposed that forfeiture shares were calculated from the shrinking unclaimed pool. That made later claims smaller and left tokens undistributed. Circle state now keeps the immutable `forfeit_total` for share calculations while decrementing `forfeit_pool` after each claim.
 
 The largest contribution payout test exposed that multiplying the pot by the fee basis points in `u64` overflowed before division, even when the final fee fit. Fee calculation now widens the multiplication to `u128` before converting the divided result back to `u64`.
+
+For the devnet smoke setup, the single RPC airdrop request failed and the official faucet required a Cloudflare challenge that was unavailable in the browser environment. No airdrop retries were made. The smoke script funds its saved test wallets with small SOL transfers from the already funded devnet deployer instead.

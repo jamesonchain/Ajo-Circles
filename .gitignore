@@ -7,4 +7,5 @@ node_modules
 *.tsbuildinfo
 .pnpm-store
 test-ledger
+.devnet
 .yarn

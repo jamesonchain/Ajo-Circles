@@ -16,4 +16,14 @@ anchor test
 
 To run the web demo, use `pnpm install` and `pnpm dev` inside `app`. The local demo route is intentionally separate from live wallet and RPC state until the devnet deployment is recorded.
 
-The program currently uses `B7YcA9vqKUF2Gkj6Ct8AG71a3upQftd7VwPBV7qjn3cw` for local testing. It is not presented as a devnet deployment address.
+Local tests use `B7YcA9vqKUF2Gkj6Ct8AG71a3upQftd7VwPBV7qjn3cw`. The same program is deployed to devnet as verified below.
+
+## Devnet verification
+
+The Ajo Circles program is deployed to Solana devnet at `B7YcA9vqKUF2Gkj6Ct8AG71a3upQftd7VwPBV7qjn3cw`. On October 4, 2026, the devnet smoke script created a six decimal test mint, created a circle, initialized both vaults, joined three test wallets, and read the circle back with three members.
+
+Test mint: `9qGJsamQ8irgapMSmEoR525GhD7DH4tFMsbtfUNHEvdb`.
+
+Smoke circle: `CU8i9Yg43chjyRL6qHbFcmoBXvvpoWKnxSb1V747KVpH`.
+
+Set `ANCHOR_PROVIDER_URL` to `https://api.devnet.solana.com` and `ANCHOR_WALLET` to a funded signer, then run `pnpm devnet:smoke` from the repository root. The script saves generated wallet keys and setup state in the ignored `.devnet` directory. It funds test wallets with transfers from the configured signer and checks that the RPC endpoint is devnet before sending transactions.
