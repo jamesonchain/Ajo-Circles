@@ -381,6 +381,9 @@ export default function Home() {
         (_, index) => index
       ).find((index) => (circle.slotsTaken & (1 << index)) === 0) ?? -1;
       if (slot < 0) throw new Error("There are no turns left in this circle.");
+      if (slot >= circle.maxMembers) {
+        throw new Error("That turn is outside this circle.");
+      }
       if ((circle.slotsTaken & (1 << slot)) !== 0) {
         throw new Error("That turn has already been chosen.");
       }
@@ -593,13 +596,16 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (dialog !== "join" || !selectedCircle) return;
+    if (dialog !== "join" || !selectedCircle) {
+      setJoinSlot(null);
+      return;
+    }
     const firstOpenSlot = Array.from(
       { length: selectedCircle.account.maxMembers },
       (_, slot) => slot
     ).find((slot) => (selectedCircle.account.slotsTaken & (1 << slot)) === 0);
-    setJoinSlot((current) => current ?? firstOpenSlot ?? null);
-  }, [dialog, selectedCircle]);
+    setJoinSlot(firstOpenSlot ?? null);
+  }, [dialog, selectedCircle?.address]);
 
   const nextPayment = memberships
     .map((membership) => ({
