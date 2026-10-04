@@ -909,6 +909,83 @@ h3 {
   color: var(--green);
   font-variant-numeric: tabular-nums;
 }
+
+.primary-circle-action {
+  min-width: 210px;
+  justify-content: center;
+}
+
+.circle-subsection {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+
+.subsection-heading,
+.member-row,
+.timeline-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.subsection-heading > span:last-child,
+.timeline-item > span,
+.member-row small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.payout-timeline,
+.member-list {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}
+
+.timeline-item,
+.member-row {
+  padding: 0.7rem 0.8rem;
+  border-radius: 0.8rem;
+  background: var(--green-soft);
+}
+
+.timeline-item strong {
+  margin-left: auto;
+  font-size: 0.82rem;
+}
+
+.timeline-current {
+  outline: 1px solid var(--gold);
+}
+
+.timeline-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.timeline-current .timeline-dot {
+  background: var(--gold);
+}
+
+.member-row > span:first-child {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.member-badge {
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.member-paid { color: #166534; background: #dcfce7; }
+.member-missed { color: #991b1b; background: #fee2e2; }
+.member-due { color: #92400e; background: #fef3c7; }
 .deposit-note {
   padding: 11px;
   display: flex;

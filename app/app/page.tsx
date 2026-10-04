@@ -175,6 +175,7 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [noticeError, setNoticeError] = useState(false);
   const [shareReady, setShareReady] = useState(false);
+  const [clock, setClock] = useState(() => Date.now());
 
   const selectedCircle = useMemo(
     () => circles.find(({ address }) => address.toBase58() === selectedAddress),
@@ -236,6 +237,11 @@ export default function Home() {
       cancelled = true;
     };
   }, [client, connection, selectedCircle]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const showNotice = useCallback((message: string, isError = false) => {
     setNotice(message);
@@ -654,6 +660,43 @@ export default function Home() {
       selectedCircle.account.status,
       "completed"
     );
+  const roundDeadline = selectedCircle
+    ? BigInt(selectedCircle.account.roundStartTs.toString()) +
+      BigInt(selectedCircle.account.periodSecs.toString())
+    : 0n;
+  const deadlinePassed =
+    selectedCircle !== undefined && BigInt(Math.floor(clock / 1000)) >= roundDeadline;
+  const currentRoundBit = selectedCircle
+    ? 1 << selectedCircle.account.currentRound
+    : 0;
+  const currentRoundPaid = selectedMembership
+    ? (selectedMembership.member.paidBitmask & currentRoundBit) !== 0
+    : false;
+  const missedMember = selectedMembers.find(
+    (member) => (member.paidBitmask & currentRoundBit) === 0
+  );
+  const primaryAction = selectedComplete
+    ? selectedMembership && !selectedMembership.member.depositWithdrawn
+      ? { label: "Withdraw my deposit", action: withdrawDeposit, icon: ArrowDownToLine }
+      : null
+    : selectedIsActive && roundComplete && isRecipient
+    ? { label: "Claim payout", action: claimCurrentPayout, icon: ArrowDownToLine }
+    : selectedIsActive && selectedMembership && !currentRoundPaid
+    ? {
+        label: memberTurn ? "Your turn" : "Pay now",
+        action: payCurrentRound,
+        icon: ArrowUpRight,
+      }
+    : selectedIsActive && selectedMembership
+    ? { label: "Waiting for others", action: undefined, icon: Clock3 }
+    : null;
+  const ActionIcon = primaryAction?.icon;
+  const timelineRounds = selectedCircle
+    ? Array.from({ length: selectedCircle.account.maxMembers }, (_, round) => {
+        const recipient = selectedMembers.find((member) => member.slot === round);
+        return { round, recipient };
+      })
+    : [];
   const explorerLink = selectedAddress
     ? `${explorerBase}/${selectedAddress}?cluster=devnet`
     : "";
@@ -980,51 +1023,24 @@ export default function Home() {
               </div>
             </div>
             <div className="primary-action-row">
-              {selectedMembership &&
-                selectedIsActive &&
-                !selectedMembership.member.depositWithdrawn && (
-                  <button
-                    className="button button-gold"
-                    onClick={() => void payCurrentRound()}
-                    disabled={
-                      busy ||
-                      (selectedMembership.member.paidBitmask &
-                        (1 << (selectedCircle?.account.currentRound ?? 0))) !==
-                        0
-                    }
-                  >
-                    <ArrowUpRight size={17} /> Pay this round
-                  </button>
-                )}
-              {selectedIsActive && wallet.publicKey && (
+              {primaryAction && (
+                <button
+                  className="button button-gold primary-circle-action"
+                  onClick={primaryAction.action ? () => void primaryAction.action() : undefined}
+                  disabled={busy || !primaryAction.action}
+                >
+                  {ActionIcon && <ActionIcon size={18} />} {primaryAction.label}
+                </button>
+              )}
+              {selectedIsActive && deadlinePassed && wallet.publicKey && missedMember && (
                 <button
                   className="button button-outline"
                   onClick={() => void coverMissingPayment()}
-                  disabled={busy || roundComplete}
+                  disabled={busy || missedMember.wallet.equals(wallet.publicKey)}
                 >
-                  <ShieldCheck size={17} /> Cover a payment
+                  <ShieldCheck size={17} /> Cover this payment
                 </button>
               )}
-              {selectedIsActive && roundComplete && isRecipient && (
-                <button
-                  className="button button-primary"
-                  onClick={() => void claimCurrentPayout()}
-                  disabled={busy}
-                >
-                  <ArrowDownToLine size={17} /> Receive the pot
-                </button>
-              )}
-              {selectedComplete &&
-                selectedMembership &&
-                !selectedMembership.member.depositWithdrawn && (
-                  <button
-                    className="button button-primary"
-                    onClick={() => void withdrawDeposit()}
-                    disabled={busy}
-                  >
-                    <ArrowDownToLine size={17} /> Withdraw my deposit
-                  </button>
-                )}
               {!selectedCircle && (
                 <span className="muted-copy">
                   Open a circle to see its live turns here.
@@ -1071,6 +1087,31 @@ export default function Home() {
               >
                 Share on WhatsApp <ArrowUpRight size={15} />
               </button>
+            )}
+            {selectedCircle && (
+              <>
+                <div className="circle-subsection">
+                  <div className="subsection-heading"><span className="eyebrow">Payout timeline</span><span>Round {selectedCircle.account.currentRound + 1}</span></div>
+                  <div className="payout-timeline">
+                    {timelineRounds.map(({ round, recipient }) => (
+                      <div className={`timeline-item ${round === selectedCircle.account.currentRound ? "timeline-current" : ""}`} key={round}>
+                        <span className="timeline-dot" />
+                        <span>Round {round + 1}</span>
+                        <strong>{recipient ? compactAddress(recipient.wallet.toBase58()) : "Open turn"}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="circle-subsection">
+                  <div className="subsection-heading"><span className="eyebrow">Members</span><span>{selectedMembers.length} joined</span></div>
+                  <div className="member-list">
+                    {selectedMembers.map((member) => {
+                      const paid = (member.paidBitmask & currentRoundBit) !== 0;
+                      return <div className="member-row" key={member.wallet.toBase58()}><span><strong>Turn {member.slot + 1}</strong><small>{compactAddress(member.wallet.toBase58())}</small></span><span className={`member-badge ${paid ? "member-paid" : member.defaults > 0 ? "member-missed" : "member-due"}`}>{paid ? "Paid" : member.defaults > 0 ? "Missed" : "Due"}</span></div>;
+                    })}
+                  </div>
+                </div>
+              </>
             )}
           </div>
         </div>
