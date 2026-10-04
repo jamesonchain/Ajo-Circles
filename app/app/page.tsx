@@ -121,6 +121,15 @@ function deadlineText(deadline: bigint) {
   return `${Math.max(1, minutes)}m`;
 }
 
+function frequencyText(periodSecs: anchor.BN) {
+  const seconds = periodSecs.toNumber();
+  if (seconds === 86_400) return "day";
+  if (seconds === 1_209_600) return "two weeks";
+  if (seconds === 2_592_000) return "month";
+  if (seconds === 604_800) return "week";
+  return `every ${Math.max(1, Math.round(seconds / 86_400))} days`;
+}
+
 function isActive(status: object) {
   return Object.prototype.hasOwnProperty.call(status, "active");
 }
@@ -155,6 +164,7 @@ export default function Home() {
   const [potAmount, setPotAmount] = useState(0n);
   const [dialog, setDialog] = useState<"create" | "join" | null>(null);
   const [circleAddressInput, setCircleAddressInput] = useState("");
+  const [joinSlot, setJoinSlot] = useState<number | null>(null);
   const [circleName, setCircleName] = useState("");
   const [contribution, setContribution] = useState("10");
   const [frequency, setFrequency] = useState("weekly");
@@ -345,7 +355,7 @@ export default function Home() {
     }
   }
 
-  async function joinCircle(addressText: string) {
+  async function joinCircle(addressText: string, requestedSlot = joinSlot) {
     if (!wallet.publicKey) {
       showNotice("Connect your wallet to choose a turn.", true);
       return;
@@ -366,14 +376,14 @@ export default function Home() {
       if (!sourceAccount) {
         throw new Error("This wallet does not have a test USDC account yet.");
       }
-      let slot = -1;
-      for (let index = 0; index < circle.maxMembers; index += 1) {
-        if ((circle.slotsTaken & (1 << index)) === 0) {
-          slot = index;
-          break;
-        }
-      }
+      const slot = requestedSlot ?? Array.from(
+        { length: circle.maxMembers },
+        (_, index) => index
+      ).find((index) => (circle.slotsTaken & (1 << index)) === 0) ?? -1;
       if (slot < 0) throw new Error("There are no turns left in this circle.");
+      if ((circle.slotsTaken & (1 << slot)) !== 0) {
+        throw new Error("That turn has already been chosen.");
+      }
       const required =
         BigInt(circle.contribution.toString()) *
         BigInt(Math.max(1, circle.maxMembers - 1 - slot));
@@ -574,8 +584,22 @@ export default function Home() {
 
   useEffect(() => {
     const invite = new URLSearchParams(window.location.search).get("circle");
-    if (invite) setCircleAddressInput(invite);
+    if (invite) {
+      const address = circleAddressFromInput(invite);
+      setCircleAddressInput(address);
+      setSelectedAddress(address);
+      setDialog("join");
+    }
   }, []);
+
+  useEffect(() => {
+    if (dialog !== "join" || !selectedCircle) return;
+    const firstOpenSlot = Array.from(
+      { length: selectedCircle.account.maxMembers },
+      (_, slot) => slot
+    ).find((slot) => (selectedCircle.account.slotsTaken & (1 << slot)) === 0);
+    setJoinSlot((current) => current ?? firstOpenSlot ?? null);
+  }, [dialog, selectedCircle]);
 
   const nextPayment = memberships
     .map((membership) => ({
@@ -1265,32 +1289,27 @@ export default function Home() {
                   void joinCircle(circleAddressInput);
                 }}
               >
-                <label>
-                  Circle link or address
-                  <input
-                    value={circleAddressInput}
-                    onChange={(event) =>
-                      setCircleAddressInput(event.target.value)
-                    }
-                    placeholder="Paste an invite link or circle address"
-                    required
-                  />
-                </label>
                 {selectedCircle && (
-                  <div className="join-preview">
-                    <strong>{selectedCircle.account.name}</strong>
-                    <span>
-                      {selectedCircle.account.memberCount} of{" "}
-                      {selectedCircle.account.maxMembers} turns chosen
-                    </span>
-                    <span>
-                      {amountText(
-                        selectedCircle.account.contribution.toString()
-                      )}{" "}
-                      USDC per round
-                    </span>
-                  </div>
+                  <>
+                    <div className="join-preview">
+                      <strong>{selectedCircle.account.name}</strong>
+                      <span>{selectedCircle.account.memberCount} of {selectedCircle.account.maxMembers} turns chosen</span>
+                      <span>{amountText(selectedCircle.account.contribution.toString())} USDC every {frequencyText(selectedCircle.account.periodSecs)}</span>
+                    </div>
+                    <label>Choose an open turn
+                      <select value={joinSlot ?? ""} onChange={(event) => setJoinSlot(Number(event.target.value))} required>
+                        {Array.from({ length: selectedCircle.account.maxMembers }, (_, slot) => slot)
+                          .filter((slot) => (selectedCircle.account.slotsTaken & (1 << slot)) === 0)
+                          .map((slot) => {
+                            const deposit = calculateDeposit(BigInt(selectedCircle.account.contribution.toString()), selectedCircle.account.maxMembers, slot);
+                            return <option key={slot} value={slot}>Turn {slot + 1}, deposit {amountText(deposit)} USDC</option>;
+                          })}
+                      </select>
+                    </label>
+                    <div className="deposit-note"><ShieldCheck size={17} /><span>The deposit helps cover missed payments. Earlier turns require a larger deposit. Any unused amount can be withdrawn after the circle ends.</span></div>
+                  </>
                 )}
+                {!selectedCircle && <label>Circle link or address<input value={circleAddressInput} onChange={(event) => setCircleAddressInput(event.target.value)} placeholder="Paste an invite link or circle address" required /></label>}
                 {tokenBalance !== null && tokenBalance === 0n && (
                   <p className="form-help">
                     This wallet has no test USDC yet. Test funds are issued to
@@ -1299,9 +1318,9 @@ export default function Home() {
                 )}
                 <button
                   className="button button-primary form-submit"
-                  disabled={busy || !wallet.publicKey}
+                  disabled={busy || !wallet.publicKey || Boolean(selectedCircle && selectedCircle.account.memberCount >= selectedCircle.account.maxMembers)}
                 >
-                  {busy ? "Waiting for wallet" : "Choose an open turn"}
+                  {busy ? "Waiting for wallet" : "Choose turn and join"}
                 </button>
               </form>
             )}
