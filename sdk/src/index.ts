@@ -1,6 +1,13 @@
 import * as anchor from "@coral-xyz/anchor";
-import { AjoCircles } from "../../target/types/ajo_circles.js";
+import type { AjoCircles } from "./idl/ajo_circles.js";
 import { PublicKey, TransactionInstruction } from "@solana/web3.js";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const IDL = require("./idl/ajo_circles.json") as AjoCircles;
+
+export { IDL };
+export type { AjoCircles };
 
 export const SEEDS = {
   config: "config",
@@ -12,6 +19,19 @@ export const SEEDS = {
 } as const;
 
 export type AjoProgram = anchor.Program<AjoCircles>;
+export type IntegerLike = anchor.BN | bigint | number;
+export type InstructionAccounts = Readonly<Record<string, PublicKey>>;
+
+export type CircleMembership = {
+  memberAddress: PublicKey;
+  member: Awaited<ReturnType<AjoProgram["account"]["member"]["fetch"]>>;
+  circleAddress: PublicKey;
+  circle: Awaited<ReturnType<AjoProgram["account"]["circle"]["fetch"]>>;
+};
+
+export type PaymentDue = CircleMembership & {
+  deadline: bigint;
+};
 
 export function deriveConfig(programId: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync(
@@ -23,7 +43,7 @@ export function deriveConfig(programId: PublicKey): PublicKey {
 export function deriveCircle(
   programId: PublicKey,
   creator: PublicKey,
-  circleId: anchor.BN | bigint | number
+  circleId: IntegerLike
 ): PublicKey {
   const id = (
     circleId instanceof anchor.BN
@@ -73,6 +93,8 @@ export function calculateDeposit(
   maxMembers: number,
   slot: number
 ): bigint {
+  if (BigInt(contribution) <= 0n)
+    throw new Error("Contribution must be positive");
   if (!Number.isInteger(maxMembers) || maxMembers < 3 || maxMembers > 12)
     throw new Error("Member count must be between 3 and 12");
   if (!Number.isInteger(slot) || slot < 0 || slot >= maxMembers)
@@ -82,8 +104,8 @@ export function calculateDeposit(
 }
 
 export function nextDeadline(
-  roundStartTs: anchor.BN | bigint | number,
-  periodSecs: anchor.BN | bigint | number
+  roundStartTs: IntegerLike,
+  periodSecs: IntegerLike
 ): bigint {
   const start =
     roundStartTs instanceof anchor.BN
@@ -96,8 +118,23 @@ export function nextDeadline(
   return start + period;
 }
 
+function toAnchorBn(value: IntegerLike): anchor.BN {
+  return value instanceof anchor.BN ? value : new anchor.BN(value.toString());
+}
+
+function isActiveStatus(status: unknown): boolean {
+  return (
+    typeof status === "object" &&
+    status !== null &&
+    Object.prototype.hasOwnProperty.call(status, "active")
+  );
+}
+
 export class AjoCirclesClient {
-  constructor(readonly program: AjoProgram) {}
+  constructor(
+    readonly program: AjoProgram,
+    readonly provider: anchor.Provider = program.provider
+  ) {}
 
   get programId() {
     return this.program.programId;
@@ -118,10 +155,10 @@ export class AjoCirclesClient {
     return deriveVault(this.programId, kind, circle);
   }
 
-  async instruction(
-    name: keyof AjoCirclesClientInstructions,
+  private async buildInstruction(
+    name: AjoCirclesClientInstruction,
     args: unknown[],
-    accounts: Record<string, PublicKey>
+    accounts: InstructionAccounts
   ): Promise<TransactionInstruction> {
     const builder = (
       this.program.methods as unknown as Record<
@@ -132,20 +169,159 @@ export class AjoCirclesClient {
     return builder.accountsPartial(accounts).instruction();
   }
 
+  initConfig(
+    feeBps: number,
+    minPeriodSecs: IntegerLike,
+    accounts: InstructionAccounts
+  ) {
+    return this.buildInstruction(
+      "initConfig",
+      [feeBps, toAnchorBn(minPeriodSecs)],
+      accounts
+    );
+  }
+
+  createCircle(
+    circleId: IntegerLike,
+    name: string,
+    contribution: IntegerLike,
+    periodSecs: IntegerLike,
+    maxMembers: number,
+    accounts: InstructionAccounts
+  ) {
+    return this.buildInstruction(
+      "createCircle",
+      [
+        toAnchorBn(circleId),
+        name,
+        toAnchorBn(contribution),
+        toAnchorBn(periodSecs),
+        maxMembers,
+      ],
+      accounts
+    );
+  }
+
+  initializePotVault(accounts: InstructionAccounts) {
+    return this.buildInstruction("initializePotVault", [], accounts);
+  }
+
+  initializeDepositVault(accounts: InstructionAccounts) {
+    return this.buildInstruction("initializeDepositVault", [], accounts);
+  }
+
+  joinCircle(slot: number, accounts: InstructionAccounts) {
+    return this.buildInstruction("joinCircle", [slot], accounts);
+  }
+
+  contribute(accounts: InstructionAccounts) {
+    return this.buildInstruction("contribute", [], accounts);
+  }
+
+  cancelCircle(accounts: InstructionAccounts) {
+    return this.buildInstruction("cancelCircle", [], accounts);
+  }
+
+  refundDeposit(accounts: InstructionAccounts) {
+    return this.buildInstruction("refundDeposit", [], accounts);
+  }
+
+  settleDefault(accounts: InstructionAccounts) {
+    return this.buildInstruction("settleDefault", [], accounts);
+  }
+
+  claimPayout(accounts: InstructionAccounts) {
+    return this.buildInstruction("claimPayout", [], accounts);
+  }
+
+  claimForfeitShare(accounts: InstructionAccounts) {
+    return this.buildInstruction("claimForfeitShare", [], accounts);
+  }
+
+  withdrawDeposit(accounts: InstructionAccounts) {
+    return this.buildInstruction("withdrawDeposit", [], accounts);
+  }
+
+  finalizeScore(accounts: InstructionAccounts) {
+    return this.buildInstruction("finalizeScore", [], accounts);
+  }
+
   async fetchCircle(address: PublicKey) {
     return this.program.account.circle.fetch(address);
   }
+
+  async fetchConfig(address = this.config) {
+    return this.program.account.config.fetch(address);
+  }
+
   async fetchMember(address: PublicKey) {
     return this.program.account.member.fetch(address);
   }
+
   async fetchScore(wallet: PublicKey) {
-    return this.program.account.ajoScore.fetch(this.score(wallet));
+    return this.program.account.ajoScore.fetchNullable(this.score(wallet));
   }
+
   async listMembers(circle: PublicKey) {
-    return this.program.account.member.all([
+    const members = await this.program.account.member.all([
       { memcmp: { offset: 8 + 32, bytes: circle.toBase58() } },
     ]);
+    return members.sort(
+      (left, right) => left.account.slot - right.account.slot
+    );
   }
+
+  async listCirclesForWallet(wallet: PublicKey): Promise<CircleMembership[]> {
+    const memberships = await this.program.account.member.all([
+      { memcmp: { offset: 8, bytes: wallet.toBase58() } },
+    ]);
+    return Promise.all(
+      memberships.map(async ({ publicKey, account }) => ({
+        memberAddress: publicKey,
+        member: account,
+        circleAddress: account.circle,
+        circle: await this.fetchCircle(account.circle),
+      }))
+    );
+  }
+
+  async nextPaymentsDue(wallet: PublicKey): Promise<PaymentDue[]> {
+    const memberships = await this.listCirclesForWallet(wallet);
+    return memberships
+      .filter(({ circle, member }) => {
+        if (!isActiveStatus(circle.status)) return false;
+        const roundBit = 1 << circle.currentRound;
+        return (member.paidBitmask & roundBit) === 0;
+      })
+      .map((membership) => ({
+        ...membership,
+        deadline: nextDeadline(
+          membership.circle.roundStartTs,
+          membership.circle.periodSecs
+        ),
+      }))
+      .sort((left, right) =>
+        left.deadline < right.deadline
+          ? -1
+          : left.deadline > right.deadline
+          ? 1
+          : 0
+      );
+  }
+
+  async nextPaymentDue(wallet: PublicKey): Promise<PaymentDue | null> {
+    return (await this.nextPaymentsDue(wallet))[0] ?? null;
+  }
+
+  async walletSummary(wallet: PublicKey) {
+    const [circles, nextPayment, score] = await Promise.all([
+      this.listCirclesForWallet(wallet),
+      this.nextPaymentDue(wallet),
+      this.fetchScore(wallet),
+    ]);
+    return { circles, nextPayment, score };
+  }
+
   decodeEvents(logs: string[]) {
     return [
       ...new anchor.EventParser(
@@ -156,18 +332,29 @@ export class AjoCirclesClient {
   }
 }
 
-export type AjoCirclesClientInstructions = {
-  initConfig: unknown;
-  createCircle: unknown;
-  initializePotVault: unknown;
-  initializeDepositVault: unknown;
-  joinCircle: unknown;
-  contribute: unknown;
-  cancelCircle: unknown;
-  refundDeposit: unknown;
-  settleDefault: unknown;
-  claimPayout: unknown;
-  claimForfeitShare: unknown;
-  withdrawDeposit: unknown;
-  finalizeScore: unknown;
-};
+export function createAjoCirclesClient(
+  provider: anchor.Provider
+): AjoCirclesClient {
+  return new AjoCirclesClient(
+    new anchor.Program<AjoCircles>(IDL as AjoCircles, provider)
+  );
+}
+
+export function createAjoCirclesClientFromEnv(): AjoCirclesClient {
+  return createAjoCirclesClient(anchor.AnchorProvider.env());
+}
+
+export type AjoCirclesClientInstruction =
+  | "initConfig"
+  | "createCircle"
+  | "initializePotVault"
+  | "initializeDepositVault"
+  | "joinCircle"
+  | "contribute"
+  | "cancelCircle"
+  | "refundDeposit"
+  | "settleDefault"
+  | "claimPayout"
+  | "claimForfeitShare"
+  | "withdrawDeposit"
+  | "finalizeScore";

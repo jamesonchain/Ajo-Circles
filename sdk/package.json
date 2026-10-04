@@ -1,0 +1,30 @@
+{
+  "name": "ajo_circles_sdk",
+  "version": "0.1.0",
+  "description": "TypeScript client and helpers for the Ajo Circles Solana program",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./idl/ajo_circles.json": "./dist/idl/ajo_circles.json"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "test": "tsc --project tsconfig.test.json --noEmit false --declaration false --outDir .test-dist && node --test .test-dist/test/*.test.js"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.31.1",
+    "@solana/web3.js": "^1.99.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
+  }
+}

@@ -4,6 +4,18 @@ Ajo Circles is a savings group app for rotating pots on Solana. Members contribu
 
 The project is under active construction. The Anchor program, SDK foundation, and a polished local demo frontend are included. See [STATUS.md](STATUS.md) for the current implementation state.
 
+## SDK
+
+Build the SDK with `pnpm build:sdk`. For a local consumer, install it from the SDK folder with `pnpm add file:/path/to/sdk`. Configure `ANCHOR_PROVIDER_URL` and `ANCHOR_WALLET`, then use this five line example to read a wallet's circles, next payment due, and Ajo Score. A wallet with no completed circle has no score account yet, so the score result is `null`.
+
+```ts
+import { createAjoCirclesClientFromEnv } from "ajo_circles_sdk";
+const client = createAjoCirclesClientFromEnv();
+const wallet = client.provider.wallet.publicKey;
+const summary = await client.walletSummary(wallet);
+console.log(summary.circles, summary.nextPayment, summary.score);
+```
+
 ## Quick start
 
 Install the root dependencies, then run the verified local contract flow.
