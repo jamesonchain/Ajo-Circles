@@ -84,6 +84,7 @@ function friendlyError(error: unknown) {
     InvalidMemberCount: "Choose between 3 and 12 members.",
     InvalidSlot: "That turn is outside this circle.",
     MintMismatch: "This account does not use the circle’s test USDC.",
+    MathOverflow: "Those circle settings are too large. Choose a smaller amount.",
     TokenOwnerMismatch:
       "Choose a test USDC account owned by your connected wallet.",
     CircleNotActive: "This action is available while the circle is active.",
@@ -176,6 +177,7 @@ export default function Home() {
   const [noticeError, setNoticeError] = useState(false);
   const [shareReady, setShareReady] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
+  const [testMoneyBusy, setTestMoneyBusy] = useState(false);
 
   const selectedCircle = useMemo(
     () => circles.find(({ address }) => address.toBase58() === selectedAddress),
@@ -580,6 +582,29 @@ export default function Home() {
     showNotice("Invite link copied.");
   }
 
+  async function requestTestMoney() {
+    if (!wallet.publicKey) {
+      showNotice("Connect your wallet to request test money.", true);
+      return;
+    }
+    setTestMoneyBusy(true);
+    try {
+      const response = await fetch("/api/test-money", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ wallet: wallet.publicKey.toBase58() }),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Test funds could not be sent.");
+      await refresh();
+      showNotice("Test USDC and devnet SOL sent to your wallet.");
+    } catch (cause) {
+      showNotice(friendlyError(cause), true);
+    } finally {
+      setTestMoneyBusy(false);
+    }
+  }
+
   async function shareInvite(address: string, name: string) {
     const link = `${window.location.origin}/?circle=${address}`;
     window.open(
@@ -737,6 +762,9 @@ export default function Home() {
             onClick={() => setDialog("create")}
           >
             <Plus size={18} /> Create circle
+          </button>
+          <button className="button button-outline" onClick={() => void requestTestMoney()} disabled={testMoneyBusy || !wallet.publicKey}>
+            <Wallet size={17} /> {testMoneyBusy ? "Sending test money" : "Get test money"}
           </button>
         </div>
       </section>
