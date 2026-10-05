@@ -8,6 +8,7 @@ node_modules
 .pnpm-store
 test-ledger
 .devnet
+**/.env.local
 sdk/dist
 sdk/.test-dist
 .yarn
