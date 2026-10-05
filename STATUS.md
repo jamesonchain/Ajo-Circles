@@ -20,19 +20,21 @@ The SDK is a workspace package with explicit builders for all 13 instructions, p
 
 The app has a real Phantom and Solflare wallet selector, devnet account reads, a data driven circle ring, live totals, wallet circle and score states, an open circle directory, and the circle creation wizard. The slot review was verified in the browser and showed the expected deposits. No app transaction has been signed from a browser wallet.
 
+A dedicated faucet wallet is saved at the ignored `.devnet/faucet.json`. The deployer was confirmed as the test mint authority, funded the faucet with 1 SOL, and transferred mint authority to it on devnet. The local app environment uses the faucet key without tracking or displaying its secret. The restarted `/api/test-money` route was called successfully for a known devnet test wallet and sent 100 USDC plus SOL. That wallet now has 104 USDC. The connected wallet beginning with 2cmL and ending with Jzdz could not be resolved because no browser surface was available.
+
 ## Milestone C step record
 
 | Step | Code exists | App typecheck and Next build | Signed on devnet |
 | --- | --- | --- | --- |
 | 1. Create circle wizard | Yes. Name and amount, frequency and size, deposit review, invite link, copy, WhatsApp share, and real create and vault transaction builders exist. | Yes. The app typecheck and production build passed after this step. | No. The create and vault transactions were not signed from the app. |
 | 2. Circle page | Yes. Ring, countdown, one primary action, payout timeline, member badges, payout and cover actions exist. | Yes. The app typecheck and production build passed after this step. | No. Payment, payout, and cover transactions were not signed from the app. |
-| 3. Get test money | Yes. The dynamic `/api/test-money` route, rate limit, devnet guard, SOL transfer, USDC mint, client button, and contract error mapping exist. | Yes. The app typecheck and production build passed after this step. | No. The route was not invoked against devnet from the deployed app. |
+| 3. Get test money | Yes. The dynamic `/api/test-money` route, rate limit, devnet guard, SOL transfer, USDC mint, client button, contract error mapping, and dedicated faucet exist. | Yes. The app typecheck and production build passed after this step. | Yes. The restarted local route minted 100 USDC and sent SOL to a known devnet test wallet. |
 | 4. My circles and completion | Yes. The My circles dashboard and completion panel with Withdraw my deposit and Update my Ajo Score exist. | Yes. The app typecheck and production build passed after this step. | No. Withdraw and score transactions were not signed from the app. |
 | 5. Environment and deployment readiness | Yes. `.env.example` lists the app and test money variables, and the app exposes the test money route. | Yes. The final app typecheck and production build passed. | No. Vercel deployment and a signed app flow were not verified. |
 
 ## Not Yet Verified
 
-No Step 1 to 5 app flow has been signed from a browser wallet on devnet. A full savings cycle with a covered default has not been run through the app on devnet. Vercel deployment has not been verified. The SDK has not been published to a public package registry. No independent security audit has been performed.
+No Step 1, 2, or 4 app flow has been signed from a browser wallet on devnet. Step 3 was verified through the local route with a known test wallet, not the connected browser wallet. A full savings cycle with a covered default has not been run through the app on devnet. Vercel deployment has not been verified. The SDK has not been published to a public package registry. No independent security audit has been performed.
 
 The build emits existing Anchor macro configuration, glob re export, and deprecation warnings. They do not prevent the build or tests from passing.
 

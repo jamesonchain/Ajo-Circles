@@ -27,3 +27,5 @@ The long invariant test exposed that forfeiture shares were calculated from the 
 The largest contribution payout test exposed that multiplying the pot by the fee basis points in `u64` overflowed before division, even when the final fee fit. Fee calculation now widens the multiplication to `u128` before converting the divided result back to `u64`.
 
 For the devnet smoke setup, the single RPC airdrop request failed and the official faucet required a Cloudflare challenge that was unavailable in the browser environment. No airdrop retries were made. The smoke script funds its saved test wallets with small SOL transfers from the already funded devnet deployer instead.
+
+For app test money, the devnet deployer was confirmed as the authority of the smoke test mint. A dedicated faucet key is stored only in the ignored `.devnet/faucet.json`. The deployer funded it with 1 SOL and transferred mint authority to it. The app reads the faucet secret through the ignored `app/.env.local` file, while `.env.example` remains safe to commit. The faucet route and terminal fallback both use the same faucet and never include secret values in tracked files.
