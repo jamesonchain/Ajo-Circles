@@ -595,11 +595,11 @@ export default function Home() {
         body: JSON.stringify({ wallet: wallet.publicKey.toBase58() }),
       });
       const result = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(result.error ?? "Test funds could not be sent.");
+      if (!response.ok) throw new Error(result.error ?? "Test money could not be sent.");
       await refresh();
       showNotice("Test USDC and devnet SOL sent to your wallet.");
     } catch (cause) {
-      showNotice(friendlyError(cause), true);
+      showNotice(cause instanceof Error ? cause.message : "Test money could not be sent.", true);
     } finally {
       setTestMoneyBusy(false);
     }

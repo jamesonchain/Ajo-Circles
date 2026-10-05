@@ -22,7 +22,12 @@ function keypairFromEnv(name: string) {
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as { wallet?: string };
-    const wallet = new PublicKey(body.wallet ?? "");
+    let wallet: PublicKey;
+    try {
+      wallet = new PublicKey(body.wallet ?? "");
+    } catch {
+      return Response.json({ error: "The connected wallet address is invalid." }, { status: 400 });
+    }
     const now = Date.now();
     const limitMs = Number(process.env.TEST_MONEY_RATE_LIMIT_MS ?? 3_600_000);
     const previous = requests.get(wallet.toBase58()) ?? 0;
@@ -32,7 +37,13 @@ export async function POST(request: Request) {
 
     const rpc = process.env.SOLANA_RPC_URL ?? process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
     if (!rpc.includes("devnet")) return Response.json({ error: "Test money is only available on devnet." }, { status: 400 });
-    const mint = new PublicKey(process.env.TEST_MINT_ADDRESS ?? "");
+    if (!process.env.TEST_MINT_ADDRESS || !process.env.TEST_MONEY_AUTHORITY_SECRET_KEY) {
+      return Response.json(
+        { error: "Test money is not configured. Add TEST_MINT_ADDRESS and TEST_MONEY_AUTHORITY_SECRET_KEY to app/.env.local." },
+        { status: 500 }
+      );
+    }
+    const mint = new PublicKey(process.env.TEST_MINT_ADDRESS);
     const authority = keypairFromEnv("TEST_MONEY_AUTHORITY_SECRET_KEY");
     const connection = new Connection(rpc, "confirmed");
     const ata = await getOrCreateAssociatedTokenAccount(connection, authority, mint, wallet);
@@ -48,6 +59,12 @@ export async function POST(request: Request) {
     requests.set(wallet.toBase58(), now);
     return Response.json({ signature, solSignature, usdc: usdc.toString() });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Test funds could not be sent." }, { status: 400 });
+    const message = error instanceof Error ? error.message : "";
+    const friendly = /insufficient funds|insufficient lamports/i.test(message)
+      ? "The test money funder needs more devnet SOL."
+      : /fetch|timeout|429|503/i.test(message)
+      ? "Devnet is not responding right now. Try again shortly."
+      : "Test money could not be sent. Check the server configuration.";
+    return Response.json({ error: friendly }, { status: 400 });
   }
 }
