@@ -111,6 +111,17 @@ function friendlyError(error: unknown) {
   return "That request did not finish. Check the network and try again.";
 }
 
+function walletErrorText(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/not ready|not initialized|unavailable/i.test(message)) {
+    return "Your wallet is not ready. Open it and try again.";
+  }
+  if (/reject|declin|cancel/i.test(message)) {
+    return "The wallet request was rejected.";
+  }
+  return "Your wallet could not complete that request.";
+}
+
 function deadlineText(deadline: bigint) {
   const seconds = Number(deadline) - Math.floor(Date.now() / 1000);
   if (seconds <= 0) return "Past due";
@@ -146,6 +157,7 @@ function circleAddressFromInput(value: string) {
 }
 
 export default function Home() {
+  const [selectedAddress, setSelectedAddress] = useState("");
   const { connection } = useConnection();
   const {
     client,
@@ -157,8 +169,7 @@ export default function Home() {
     error,
     refresh,
     wallet,
-  } = useCircleData();
-  const [selectedAddress, setSelectedAddress] = useState("");
+  } = useCircleData(selectedAddress);
   const [selectedMembers, setSelectedMembers] = useState<
     CircleMembership["member"][]
   >([]);
@@ -250,6 +261,14 @@ export default function Home() {
     setNoticeError(isError);
     window.setTimeout(() => setNotice(""), 5200);
   }, []);
+
+  useEffect(() => {
+    const onWalletError = (event: Event) => {
+      showNotice(walletErrorText((event as CustomEvent).detail), true);
+    };
+    window.addEventListener("ajo-wallet-error", onWalletError);
+    return () => window.removeEventListener("ajo-wallet-error", onWalletError);
+  }, [showNotice]);
 
   const sendInstruction = useCallback(
     async (label: string, instruction: anchor.web3.TransactionInstruction) => {
@@ -358,6 +377,7 @@ export default function Home() {
       setCreatedInvite(address.toBase58());
       setCreateStep(4);
       await refresh();
+      showNotice("Circle created. Share the invite so members can choose their turns.");
     } catch (cause) {
       showNotice(friendlyError(cause), true);
     }
@@ -422,6 +442,7 @@ export default function Home() {
       setSelectedAddress(address.toBase58());
       setCircleAddressInput("");
       setDialog(null);
+      showNotice("You joined the circle. Next step is to wait for every turn to be chosen.");
     } catch (cause) {
       showNotice(friendlyError(cause), true);
     }
@@ -793,9 +814,8 @@ export default function Home() {
       </section>
 
       {error && (
-        <div className="network-error" role="alert">
-          <CircleHelp size={18} /> Chain data could not be loaded. Check your
-          connection and refresh.
+        <div className="network-error" role="status">
+          <CircleHelp size={18} /> {error}
         </div>
       )}
 
@@ -1047,10 +1067,13 @@ export default function Home() {
                 <span>Payment window</span>
                 <strong>
                   {selectedCircle
-                    ? deadlineText(
+                    ? selectedCircle.account.memberCount <
+                      selectedCircle.account.maxMembers
+                      ? "Not started"
+                      : deadlineText(
                         BigInt(selectedCircle.account.roundStartTs.toString()) +
                           BigInt(selectedCircle.account.periodSecs.toString())
-                      )
+                        )
                     : "—"}
                 </strong>
               </div>

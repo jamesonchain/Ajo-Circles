@@ -21,12 +21,18 @@ export function Providers({
     []
   );
 
+  const onWalletError = (error: Error) => {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("ajo-wallet-error", { detail: error }));
+    }
+  };
+
   return (
     <ConnectionProvider
       endpoint={endpoint}
       config={{ commitment: "confirmed" }}
     >
-      <WalletProvider wallets={wallets} autoConnect>
+      <WalletProvider wallets={wallets} autoConnect onError={onWalletError}>
         <WalletModalProvider>{children}</WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

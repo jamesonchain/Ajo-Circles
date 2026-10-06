@@ -269,9 +269,9 @@ h3 {
   display: flex;
   align-items: center;
   gap: 10px;
-  border: 1px solid #c4532d5c;
-  color: #87391f;
-  background: #c4532d0c;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: var(--green-soft);
   font-size: 13px;
 }
 .workspace {
@@ -1058,7 +1058,8 @@ h3 {
 }
 .toast-error {
   border-left: 4px solid var(--terracotta);
-  background: var(--ink);
+  background: #7f1d1d;
+  color: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   :root {
