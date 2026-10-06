@@ -20,6 +20,8 @@ The SDK is a workspace package with explicit builders for all 13 instructions, p
 
 The app has a real Phantom and Solflare wallet selector, devnet account reads, a data driven circle ring, live totals, wallet circle and score states, an open circle directory, and the circle creation wizard. The slot review was verified in the browser and showed the expected deposits. No app transaction has been signed from a browser wallet.
 
+The RPC resilience changes and `scripts/demo.ts` were committed before the devnet run. The demo run did not complete because the configured public devnet RPC returned repeated 429 responses before it could produce cycle signatures or final balances. A dedicated RPC URL is still required for the full cycle proof.
+
 A dedicated faucet wallet is saved at the ignored `.devnet/faucet.json`. The deployer was confirmed as the test mint authority, funded the faucet with 1 SOL, and transferred mint authority to it on devnet. The local app environment uses the faucet key without tracking or displaying its secret. The restarted `/api/test-money` route was called successfully for a known devnet test wallet and sent 100 USDC plus SOL. That wallet now has 104 USDC. The connected wallet beginning with 2cmL and ending with Jzdz could not be resolved because no browser surface was available.
 
 ## Milestone C step record
@@ -40,4 +42,4 @@ The build emits existing Anchor macro configuration, glob re export, and depreca
 
 ## Next
 
-Run the app flows with a connected wallet on devnet, including create, invite join, payment, payout, missed payment cover, test money, withdrawal, and score update. Then verify deployment on Vercel and record the confirmed signatures here.
+Set a working dedicated devnet RPC URL, rerun `scripts/demo.ts`, record its confirmed signatures and final balances, then run the browser wallet flows and verify deployment on Vercel.
