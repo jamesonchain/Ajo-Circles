@@ -191,3 +191,24 @@ Wallet setup now relies on detected Wallet Standard wallets with no legacy Phant
 Background directory and selected circle refreshes pause while a wallet connect or transaction signing request is pending. Transaction signing has a 45 second timeout and always clears the in flight state. The legacy adapter dependencies were removed from the app package and lockfile.
 
 App typecheck and ESLint pass using the app local TypeScript and ESLint binaries. Browser verification of connect, disconnect, reconnect, account switch, and ten repeated Phantom signing attempts is pending because no controllable browser tab was available in this session.
+
+## 2026 10 11 invite join target fix
+
+The program was checked first. `join_circle` already derives Member accounts with `member`, the Circle address, and the wallet, and the SDK uses the same seeds. No Anchor, IDL, or devnet deployment change was needed.
+
+The client bug was stale selected circle state. Invite links stored their address in the input while the modal rendered membership, open turns, and status from the separately selected circle. The join flow now has a dedicated invite target loaded directly by address. Opening a link clears the selected circle, loads the target Circle account, fetches only the Member PDA derived from that target and wallet, shows the target name, address, contribution, and turns, and uses the target address for the join instruction, deposit vault, source account checks, and Member PDA. Changing the pasted link clears the old target.
+
+The focused devnet verification passed with three saved funded wallets:
+
+```text
+PASS: invite circle is fetched by its address
+PASS: member PDA is scoped to invite circle for wallet 1
+PASS: invite join turn 1 stores the target circle
+PASS: member PDA is scoped to invite circle for wallet 2
+PASS: invite join turn 2 stores the target circle
+PASS: member PDA is scoped to invite circle for wallet 3
+PASS: invite join turn 3 stores the target circle
+Invite join check passed for 6JvWtZWMtfhz7hQzXxa6zYpPBzFdqE2PYWsP9vR9B2L2
+```
+
+App typecheck and ESLint pass. An interactive browser tab was unavailable, so visual invite link verification remains pending.

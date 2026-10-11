@@ -12,7 +12,7 @@ import {
   unpackAccount,
 } from "@solana/spl-token";
 import { useConnection } from "@solana/wallet-adapter-react";
-import { ComputeBudgetProgram, Transaction } from "@solana/web3.js";
+import { ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
 import { motion } from "framer-motion";
 import {
   ArrowDownToLine,
@@ -29,7 +29,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { calculateDeposit, circleStatusName, decodeCircle, decodeMember, type CircleMembership } from "ajo_circles_sdk";
+import { AjoCirclesClient, calculateDeposit, circleStatusName, decodeCircle, decodeMember, type CircleMembership } from "ajo_circles_sdk";
 import { CircleRing } from "./components/circle-ring";
 import { WalletConnectControl } from "./components/wallet-connect-control";
 import { useCircleData } from "./hooks/use-circle-data";
@@ -272,6 +272,8 @@ export default function Home() {
   const [dialog, setDialog] = useState<"create" | "join" | null>(null);
   const [circleAddressInput, setCircleAddressInput] = useState("");
   const [joinSlot, setJoinSlot] = useState<number | null>(null);
+  const [joinTarget, setJoinTarget] = useState<{ address: PublicKey; account: Awaited<ReturnType<AjoCirclesClient["fetchCircle"]>> } | null>(null);
+  const [joinTargetMember, setJoinTargetMember] = useState<Awaited<ReturnType<AjoCirclesClient["fetchMemberForWallet"]>>>(null);
   const [circleName, setCircleName] = useState("");
   const [contribution, setContribution] = useState("10");
   const [frequency, setFrequency] = useState("weekly");
@@ -327,6 +329,7 @@ export default function Home() {
   );
 
   useEffect(() => {
+    if (dialog === "join") return;
     if (!selectedAddress && memberships.length) {
       const timer = window.setTimeout(
         () => setSelectedAddress(memberships[0].circleAddress.toBase58()),
@@ -340,7 +343,7 @@ export default function Home() {
       );
       return () => window.clearTimeout(timer);
     }
-  }, [circles, memberships, selectedAddress]);
+  }, [circles, memberships, selectedAddress, dialog]);
 
   useEffect(() => {
     let cancelled = false;
@@ -685,6 +688,8 @@ export default function Home() {
       }
       const memberAddress = client.member(address, wallet.publicKey);
       const existingMember = await client.fetchMemberForWallet(address, wallet.publicKey);
+      setJoinTarget({ address, account: circle });
+      setJoinTargetMember(existingMember);
       if (existingMember) {
         setSelectedAddress(address.toBase58());
         setDialog(null);
@@ -1016,6 +1021,24 @@ export default function Home() {
     }
   }
 
+  const openJoinPreview = useCallback(async (value: string) => {
+    try {
+      const address = new PublicKey(circleAddressFromInput(value));
+      const account = await client.fetchCircle(address);
+      const member = wallet.publicKey
+        ? await client.fetchMemberForWallet(address, wallet.publicKey)
+        : null;
+      setCircleAddressInput(address.toBase58());
+      setJoinTarget({ address, account });
+      setJoinTargetMember(member);
+      setJoinSlot(null);
+      setSelectedAddress("");
+      setDialog("join");
+    } catch {
+      showNotice("That circle link could not be found on devnet.", true);
+    }
+  }, [client, showNotice, wallet.publicKey]);
+
   async function shareInvite(address: string, name: string) {
     const link = `${window.location.origin}/?circle=${address}`;
     window.open(
@@ -1030,19 +1053,14 @@ export default function Home() {
   useEffect(() => {
     const invite = new URLSearchParams(window.location.search).get("circle");
     if (invite) {
-      const address = circleAddressFromInput(invite);
-      const timer = window.setTimeout(() => {
-        setCircleAddressInput(address);
-        setSelectedAddress(address);
-        setDialog("join");
-      }, 0);
+      const timer = window.setTimeout(() => void openJoinPreview(invite), 0);
       return () => window.clearTimeout(timer);
     }
-  }, []);
+  }, [openJoinPreview]);
 
-  const joinCircleAddress = selectedCircle?.address.toBase58();
-  const joinCircleMaxMembers = selectedCircle?.account.maxMembers;
-  const joinCircleSlotsTaken = selectedCircle?.account.slotsTaken;
+  const joinCircleAddress = joinTarget?.address.toBase58();
+  const joinCircleMaxMembers = joinTarget?.account.maxMembers;
+  const joinCircleSlotsTaken = joinTarget?.account.slotsTaken;
   useEffect(() => {
     if (dialog !== "join" || !joinCircleAddress) {
       const timer = window.setTimeout(() => setJoinSlot(null), 0);
@@ -1057,6 +1075,23 @@ export default function Home() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [dialog, joinCircleAddress, joinCircleMaxMembers, joinCircleSlotsTaken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!joinTarget || !wallet.publicKey) {
+      return;
+    }
+    void client.fetchMemberForWallet(joinTarget.address, wallet.publicKey)
+      .then((member) => {
+        if (!cancelled) setJoinTargetMember(member);
+      })
+      .catch(() => {
+        if (!cancelled) setJoinTargetMember(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, joinTarget, wallet.publicKey]);
 
   const nextPayment = memberships
     .map((membership) => ({
@@ -1542,7 +1577,7 @@ export default function Home() {
                 <p className="member-state-line">You created this circle. Choose a turn to join it.</p>
               ) : null}
               {selectedCircle && !selectedMember && circleStatusName(selectedCircle.account.status) === "forming" && (
-                <button className="button button-outline" onClick={() => { setCircleAddressInput(selectedCircle.address.toBase58()); setDialog("join"); }} disabled={busy}>
+                <button className="button button-outline" onClick={() => void openJoinPreview(selectedCircle.address.toBase58())} disabled={busy}>
                   Choose a turn and join
                 </button>
               )}
@@ -1907,25 +1942,27 @@ export default function Home() {
                 className="circle-form"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  void joinCircle(circleAddressInput);
+                  if (!joinTarget) void openJoinPreview(circleAddressInput);
+                  else void joinCircle(joinTarget.address.toBase58());
                 }}
               >
-                {selectedCircle && (
+                {joinTarget && (
                   <>
                     <div className="join-preview">
-                      <strong>{selectedCircle.account.name}</strong>
-                      <span>{safeCount(selectedCircle.account.memberCount)} of {safeCount(selectedCircle.account.maxMembers)} turns chosen</span>
-                      <span>{amountText(selectedCircle.account.contribution)} USDC every {frequencyText(selectedCircle.account.periodSecs)}</span>
+                      <strong>{joinTarget.account.name}</strong>
+                      <span>{compactAddress(joinTarget.address.toBase58())}</span>
+                      <span>{safeCount(joinTarget.account.memberCount)} of {safeCount(joinTarget.account.maxMembers)} turns chosen</span>
+                      <span>{amountText(joinTarget.account.contribution)} USDC every {frequencyText(joinTarget.account.periodSecs)}</span>
                     </div>
-                    {selectedMember ? (
-                      <p className="member-state-line">You are a member, turn {selectedMember.slot + 1}, deposit {amountText(selectedMember.depositRemaining)} USDC.</p>
+                    {joinTargetMember ? (
+                      <p className="member-state-line">You are already a member of this circle on turn {joinTargetMember.slot + 1}.</p>
                     ) : (
                     <label>Choose an open turn
                       <select value={joinSlot ?? ""} onChange={(event) => setJoinSlot(Number(event.target.value))} required>
-                        {Array.from({ length: safeCount(selectedCircle.account.maxMembers) }, (_, slot) => slot)
-                          .filter((slot) => (selectedCircle.account.slotsTaken & (1 << slot)) === 0)
+                        {Array.from({ length: safeCount(joinTarget.account.maxMembers) }, (_, slot) => slot)
+                          .filter((slot) => (joinTarget.account.slotsTaken & (1 << slot)) === 0)
                           .map((slot) => {
-                            const deposit = calculateDeposit(BigInt(selectedCircle.account.contribution?.toString() ?? "0"), safeCount(selectedCircle.account.maxMembers), slot);
+                            const deposit = calculateDeposit(BigInt(joinTarget.account.contribution?.toString() ?? "0"), safeCount(joinTarget.account.maxMembers), slot);
                             return <option key={slot} value={slot}>Turn {slot + 1}, deposit {amountText(deposit)} USDC</option>;
                           })}
                       </select>
@@ -1934,7 +1971,7 @@ export default function Home() {
                     <div className="deposit-note"><ShieldCheck size={17} /><span>The deposit helps cover missed payments. Earlier turns require a larger deposit. Any unused amount can be withdrawn after the circle ends.</span></div>
                   </>
                 )}
-                {!selectedCircle && <label>Circle link or address<input value={circleAddressInput} onChange={(event) => setCircleAddressInput(event.target.value)} placeholder="Paste an invite link or circle address" required /></label>}
+                {!joinTarget && <label>Circle link or address<input value={circleAddressInput} onChange={(event) => { setCircleAddressInput(event.target.value); setJoinTarget(null); setJoinTargetMember(null); setJoinSlot(null); setSelectedAddress(""); }} onBlur={() => { if (circleAddressInput.trim()) void openJoinPreview(circleAddressInput); }} placeholder="Paste an invite link or circle address" required /></label>}
                 {tokenBalance !== null && tokenBalance === 0n && (
                   <p className="form-help">
                     This wallet has no test USDC yet. Test funds are issued to
@@ -1943,9 +1980,9 @@ export default function Home() {
                 )}
                 <button
                   className="button button-primary form-submit"
-                  disabled={busy || !wallet.publicKey || Boolean(selectedMember || selectedCancelled || (selectedCircle && safeCount(selectedCircle.account.memberCount) >= safeCount(selectedCircle.account.maxMembers)))}
+                  disabled={busy || !wallet.publicKey || Boolean(joinTargetMember || (joinTarget && (circleStatusName(joinTarget.account.status) !== "forming" || safeCount(joinTarget.account.memberCount) >= safeCount(joinTarget.account.maxMembers))))}
                 >
-                  {selectedMember ? "You are a member" : busy ? "Waiting for wallet" : "Choose turn and join"}
+                  {joinTargetMember ? "You are already a member" : busy ? "Waiting for wallet" : joinTarget ? "Choose turn and join" : "Load circle"}
                 </button>
               </form>
             )}
