@@ -9,6 +9,7 @@ import {
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
 import { SolflareWalletAdapter } from "@solana/wallet-adapter-solflare";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@solana/wallet-adapter-react-ui/styles.css";
 
 const endpoint =
@@ -37,6 +38,9 @@ function RpcStartupCheck() {
 export function Providers({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const [queryClient] = useState(() => new QueryClient({
+    defaultOptions: { queries: { staleTime: 5_000, refetchOnWindowFocus: false } },
+  }));
   const wallets = useMemo(
     () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
     []
@@ -55,8 +59,10 @@ export function Providers({
     >
       <WalletProvider wallets={wallets} autoConnect onError={onWalletError}>
         <WalletModalProvider>
-          <RpcStartupCheck />
-          {children}
+          <QueryClientProvider client={queryClient}>
+            <RpcStartupCheck />
+            {children}
+          </QueryClientProvider>
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

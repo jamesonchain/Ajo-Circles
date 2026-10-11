@@ -95,3 +95,7 @@ Phantom manual checklist for browser verification:
 5. Complete the remaining join, pay, claim payout, withdraw deposit, and finalize score actions. Each should show one approval, a confirmed Explorer toast, and no duplicate transaction.
 
 The Phantom browser checklist has not been executed in an available browser session. The demo signer flow is verified on devnet; the real Phantom signing path remains pending manual browser confirmation.
+
+## 2026 10 11 server backed directory
+
+The browser no longer calls `getProgramAccounts`. `/api/circles` queries Circle and Member accounts on the server with discriminator filters, caches each directory or wallet result for 5 seconds, retries once on the public devnet RPC, and returns stale data with the real reason when both endpoints fail. React Query keeps previous directory data during refresh, and confirmed actions clear the server cache, invalidate client queries, then refresh the selected circle directly. App typecheck and ESLint pass.

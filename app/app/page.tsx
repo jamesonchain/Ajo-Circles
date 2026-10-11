@@ -219,6 +219,8 @@ export default function Home() {
     error,
     refresh,
     refreshSelected,
+    invalidateDirectory,
+    directoryMembers,
     clearWalletData,
     optimisticBalances,
     markCircleCancelled,
@@ -304,7 +306,7 @@ export default function Home() {
       try {
         const vaultAddress = client.vault("pot", selectedCircle.address);
         const [members, vaultInfo] = await Promise.all([
-          client.listMembers(selectedCircle.address),
+          Promise.resolve(directoryMembers.filter(({ account }) => account.circle.equals(selectedCircle.address))),
           connection
             .getMultipleAccountsInfo([vaultAddress], "confirmed")
             .then(([account]) =>
@@ -325,7 +327,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [client, connection, selectedCircle]);
+  }, [client, connection, directoryMembers, selectedCircle]);
 
   useEffect(() => {
     const initial = window.setTimeout(() => setClock(Date.now()), 0);
@@ -461,6 +463,8 @@ export default function Home() {
         }
         setNotice(`${label}, waiting for confirmation`);
         await confirmSignature(connection, signature, blockhash);
+        await fetch("/api/circles", { method: "POST" });
+        invalidateDirectory();
         await refreshSelected();
         setShareReady(true);
         showNotice(
@@ -473,7 +477,7 @@ export default function Home() {
         setBusy(false);
       }
     },
-    [accountSwitchPending, connection, refreshSelected, showNotice, wallet]
+    [accountSwitchPending, connection, invalidateDirectory, refreshSelected, showNotice, wallet]
   );
 
   async function createCircle(event: React.FormEvent<HTMLFormElement>) {

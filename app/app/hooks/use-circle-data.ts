@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as anchor from "@coral-xyz/anchor";
 import { getAssociatedTokenAddress, unpackAccount } from "@solana/spl-token";
 import { useConnection, useWallet, type WalletContextState } from "@solana/wallet-adapter-react";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PublicKey } from "@solana/web3.js";
 import {
   AjoCirclesClient,
@@ -55,12 +56,35 @@ const readOnlyWallet = {
 
 type CircleAccount = Awaited<ReturnType<AjoCirclesClient["fetchCircle"]>>;
 type CircleRow = { address: PublicKey; account: CircleAccount };
+type MemberAccount = Awaited<ReturnType<AjoCirclesClient["fetchMember"]>>;
+type ApiAccount = { address: string; data: string };
+type ApiCircles = { circles: ApiAccount[]; members: ApiAccount[]; stale: boolean; reason?: string };
+
+async function fetchCircleDirectory(wallet?: string) {
+  const response = await fetch(wallet ? `/api/circles?wallet=${encodeURIComponent(wallet)}` : "/api/circles");
+  const value = (await response.json()) as ApiCircles & { error?: string };
+  if (!response.ok) throw new Error(value.error ?? "The circle directory could not be loaded.");
+  return value;
+}
 
 export function useCircleData(selectedCircleAddress = "", walletOverride?: WalletContextState) {
   const { connection } = useConnection();
   const adapterWallet = useWallet();
   const wallet = walletOverride ?? adapterWallet;
+  const queryClient = useQueryClient();
+  const { data: directoryData, refetch: refetchDirectory } = useQuery({
+    queryKey: ["circles", "directory"],
+    queryFn: () => fetchCircleDirectory(),
+    placeholderData: keepPreviousData,
+  });
+  const { data: walletData, refetch: refetchWallet } = useQuery({
+    queryKey: ["circles", "wallet", wallet.publicKey?.toBase58() ?? ""],
+    queryFn: () => fetchCircleDirectory(wallet.publicKey!.toBase58()),
+    enabled: Boolean(wallet.publicKey),
+    placeholderData: keepPreviousData,
+  });
   const [circles, setCircles] = useState<CircleRow[]>([]);
+  const [directoryMembers, setDirectoryMembers] = useState<{ address: PublicKey; account: MemberAccount }[]>([]);
   const [memberships, setMemberships] = useState<WalletCircle[]>([]);
   const [score, setScore] =
     useState<Awaited<ReturnType<AjoCirclesClient["fetchScore"]>>>(null);
@@ -107,6 +131,10 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
     setSolBalance((current) => (current ?? 0n) + sol);
   }, []);
 
+  const invalidateDirectory = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["circles"] });
+  }, [queryClient]);
+
   const provider = useMemo(() => {
     const signedWallet =
       wallet.publicKey && wallet.signTransaction
@@ -129,34 +157,82 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
     [provider]
   );
 
+  const decodeDirectory = useCallback((value: ApiCircles | undefined) => {
+    if (!value) return { circles: [] as CircleRow[], members: [] as { address: PublicKey; account: MemberAccount }[] };
+    return {
+      circles: value.circles.map(({ address, data }) => ({
+        address: new PublicKey(address),
+        account: client.program.coder.accounts.decode("circle", Buffer.from(data, "base64")) as CircleAccount,
+      })),
+      members: value.members.map(({ address, data }) => ({
+        address: new PublicKey(address),
+        account: client.program.coder.accounts.decode("member", Buffer.from(data, "base64")) as MemberAccount,
+      })),
+    };
+  }, [client]);
+
+  useEffect(() => {
+    if (!directoryData) return;
+    const decoded = decodeDirectory(directoryData);
+    const timer = window.setTimeout(() => {
+      setCircles(decoded.circles);
+      setDirectoryMembers(decoded.members);
+      if (directoryData.stale && directoryData.reason) {
+        setError(`RPC rejected the request: ${directoryData.reason}`);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [decodeDirectory, directoryData]);
+
+  useEffect(() => {
+    if (!walletData || !wallet.publicKey) return;
+    const decoded = decodeDirectory(walletData);
+    const circlesByAddress = new Map(decoded.circles.map((row) => [row.address.toBase58(), row]));
+    const joined = decoded.members.flatMap((member) => {
+      const circle = circlesByAddress.get(member.account.circle.toBase58());
+      return circle ? [{ memberAddress: member.address, member: member.account, circleAddress: circle.address, circle: circle.account }] : [];
+    });
+    const joinedAddresses = new Set(joined.map((row) => row.circleAddress.toBase58()));
+    const timer = window.setTimeout(() => setMemberships([
+      ...joined,
+      ...decoded.circles
+        .filter((row) => row.account.creator.equals(wallet.publicKey!))
+        .filter((row) => !joinedAddresses.has(row.address.toBase58()))
+        .map((row) => ({ memberAddress: null, member: null, circleAddress: row.address, circle: row.account })),
+    ]), 0);
+    return () => window.clearTimeout(timer);
+  }, [decodeDirectory, wallet.publicKey, walletData]);
+
   const refresh = useCallback(async () => {
     if (!hasLoaded.current) setLoading(true);
     setError("");
     try {
-      const allCircles = await withRpcRetry(
-        () => client.program.account.circle.all(),
-        onRpcRetry,
-        onRpcSuccess
-      );
-      setCircles(
-        allCircles
-          .map(({ publicKey, account }) => ({ address: publicKey, account }))
-          .sort((left, right) =>
-            right.account.createdTs.cmp(left.account.createdTs)
-          )
-      );
+      const [directoryResult, walletResult] = await Promise.all([
+        refetchDirectory(),
+        wallet.publicKey ? refetchWallet() : Promise.resolve({ data: undefined, error: null }),
+      ]);
+      if (directoryResult.error) throw directoryResult.error;
+      if (walletResult.error) throw walletResult.error;
+      const directory = decodeDirectory(directoryResult.data);
+      setCircles(directory.circles.sort((left, right) => right.account.createdTs.cmp(left.account.createdTs)));
+      setDirectoryMembers(directory.members);
       if (wallet.publicKey) {
         const [walletCircles, walletScore, config] = await withRpcRetry(
           () =>
             Promise.all([
-              client.listCirclesForWallet(wallet.publicKey!),
+              Promise.resolve(decodeDirectory(walletResult.data)),
               client.fetchScore(wallet.publicKey!),
               client.fetchConfig(),
             ]),
           onRpcRetry,
           onRpcSuccess
         );
-        setMemberships(walletCircles);
+        const joined = walletCircles.members.flatMap((member) => {
+          const circle = walletCircles.circles.find((row) => row.address.equals(member.account.circle));
+          return circle ? [{ memberAddress: member.address, member: member.account, circleAddress: circle.address, circle: circle.account }] : [];
+        });
+        const joinedAddresses = new Set(joined.map((row) => row.circleAddress.toBase58()));
+        setMemberships([...joined, ...walletCircles.circles.filter((row) => row.account.creator.equals(wallet.publicKey!)).filter((row) => !joinedAddresses.has(row.address.toBase58())).map((row) => ({ memberAddress: null, member: null, circleAddress: row.address, circle: row.account }))]);
         setScore(walletScore);
         const balances = await withRpcRetry(
           () => readBalances(wallet.publicKey!, config.mint),
@@ -178,7 +254,7 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
       hasLoaded.current = true;
       setLoading(false);
     }
-  }, [client, onRpcRetry, onRpcSuccess, readBalances, wallet.publicKey]);
+  }, [client, decodeDirectory, onRpcRetry, onRpcSuccess, readBalances, refetchDirectory, refetchWallet, wallet.publicKey]);
 
   const refreshSelected = useCallback(async () => {
     if (!selectedCircleAddress) return;
@@ -279,6 +355,8 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
     error,
     refresh,
     refreshSelected,
+    directoryMembers,
+    invalidateDirectory,
     clearWalletData,
     optimisticBalances,
     markCircleCancelled,
