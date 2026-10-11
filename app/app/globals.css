@@ -302,6 +302,47 @@ h3 {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+.wallet-switcher {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.wallet-switcher button,
+.switch-phantom {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 6px 9px;
+  border-radius: 999px;
+}
+.wallet-switcher .wallet-mode-active,
+.wallet-switcher button:hover,
+.switch-phantom:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+.demo-wallet-picker {
+  display: grid;
+  gap: 3px;
+  min-width: 150px;
+}
+.demo-wallet-picker select {
+  min-height: 30px;
+}
+.demo-wallet-picker small {
+  color: var(--muted);
+  font-size: 9px;
+}
+.switch-phantom {
+  justify-self: start;
+  padding: 2px 0;
+  color: var(--accent);
+}
 .empty-state {
   min-height: 245px;
   padding: 30px;

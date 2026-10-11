@@ -69,3 +69,23 @@ App typecheck and ESLint pass. No Anchor program changes were needed.
 The join path previously treated a missing source associated token account as a fatal client error, so it never reached the program and showed the generic fallback message. Join now derives the Member PDA directly, fetches that Member account before sending, adds an idempotent source ATA instruction followed by join_circle in one transaction, simulates the complete transaction, logs simulation logs and program error codes, and maps known failure reasons to friendly messages. Confirmation uses HTTP status polling because the dedicated RPC does not expose signatureSubscribe.
 
 The devnet reproduction initially exposed a separate faucet failure: the dedicated faucet had 0.00093436 SOL and could not fund the temporary wallets. The deployer topped it up, then scripts/join-status.ts created a temporary circle, joined turns one through three with three wallets, and verified each Member PDA directly. The confirmed join signatures were 5C9phLDFgEugvsdFwUq5AVc48zXBeTzNgz3Ez1DpYs5B9Vd2cwLSzH7Px3nictkGJoRup7dzmYGkVW9ynm3dGLY6, 5SyosreqLjbT1s73A8jjWrtHqhLpKdaVj9CLTMbCo8ZniugHVz9PTn3Y3NQQwhtYZMgLqorp1FbDg2kvwPsVKFS, and 32mvUMEPQhkgi3CU4Co8o1Bq5T35ZNRZJp9Z11kqSVSiUj9djuJbtfEkjjuyZkyXkLAfFSkR9BDvWdt4mwNRjopu. Circle 5au6tvygtVnPAdtFd4awMuinisKBEHYzmSwSkEP6FAF7 passed the direct status check.
+
+## 2026 10 11 Phantom and demo readiness
+
+Phantom remains the default and first wallet option in the header. Every app action uses the same transaction dispatcher and wallet signer interface. Phantom signs create with vault setup, creator ATA setup, and creator join in one transaction, join with ATA setup and join in one transaction, and pay, claim, withdraw, finalize score, cancel, and refund as one transaction each. Demo wallets use the same dispatcher with local browser keypairs and no wallet popup.
+
+The demo wallet switcher creates Ada, Tunde, and Chioma once in browser local storage, labels them as demo wallets for test money only, shows the active wallet address and balances, and keeps Switch to Phantom visible. The test money route now funds all three demo wallets in one request, with one combined ATA, USDC mint, and SOL transaction per wallet. Demo funding bypasses the normal wallet rate limit.
+
+The create wizard now self joins the creator in the selected turn and shows the exact protected deposit before approval. The weekday picker is currently a displayed preference because the deployed program starts the first round when the circle becomes full and has no weekday field; persisting that preference onchain is future work.
+
+`pnpm devnet:demo-ui` passed against devnet after replenishing the dedicated faucet. It printed PASS for creator creation at 1 / 3, wallet two joining by link with its USDC balance dropping, wallet three joining at 3 / 3, and a covered default after the 60 second period. Circle 9DJKtsxujjvMm2EAxRSKUYAUGJPeoKEcA6y1BMQTbXm4 was used for that run. The run printed confirmed signatures for every funding and action transaction.
+
+Phantom manual checklist for browser verification:
+
+1. Start the app with `NEXT_PUBLIC_SOLANA_RPC_URL` set and select Phantom first in the header.
+2. Connect Phantom on devnet and use Get test money. Confirm the balance toast and Explorer link.
+3. Create a three member circle, choose a creator turn, confirm exactly one Phantom approval, and verify the creator appears as You are a member at 1 / 3.
+4. Copy the invite, open `/join/[circleAddress]` or paste the full URL, confirm the selected turn and deposit, then verify exactly one approval and 2 / 3.
+5. Complete the remaining join, pay, claim payout, withdraw deposit, and finalize score actions. Each should show one approval, a confirmed Explorer toast, and no duplicate transaction.
+
+The Phantom browser checklist has not been executed in an available browser session. The demo signer flow is verified on devnet; the real Phantom signing path remains pending manual browser confirmation.

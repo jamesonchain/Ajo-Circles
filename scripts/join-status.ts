@@ -23,7 +23,7 @@ const faucet = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(await readFile("
 const state = JSON.parse(await readFile(".devnet/smoke-state.json", "utf8")) as { mint: string };
 const mint = new PublicKey(state.mint);
 const wallet = { publicKey: faucet.publicKey, signTransaction: async <T extends anchor.web3.Transaction>(tx: T) => { tx.partialSign(faucet); return tx; }, signAllTransactions: async <T extends anchor.web3.Transaction[]>(txs: T) => { txs.forEach((tx) => tx.partialSign(faucet)); return txs; } } as anchor.Wallet;
-const provider = new anchor.AnchorProvider(connection, wallet, { commitment: "confirmed", preflightCommitment: "confirmed" });
+const provider = new anchor.AnchorProvider(connection as unknown as anchor.web3.Connection, wallet, { commitment: "confirmed", preflightCommitment: "confirmed" });
 const client = new AjoCirclesClient(new anchor.Program(IDL as unknown as anchor.Idl, provider));
 const members = [Keypair.generate(), Keypair.generate(), Keypair.generate()];
 

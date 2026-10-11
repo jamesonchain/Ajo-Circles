@@ -1,4 +1,8 @@
-import { getOrCreateAssociatedTokenAccount, mintTo } from "@solana/spl-token";
+import {
+  createAssociatedTokenAccountIdempotentInstruction,
+  createMintToInstruction,
+  getAssociatedTokenAddress,
+} from "@solana/spl-token";
 import {
   Connection,
   Keypair,
@@ -6,7 +10,6 @@ import {
   PublicKey,
   SystemProgram,
   Transaction,
-  sendAndConfirmTransaction,
 } from "@solana/web3.js";
 
 export const runtime = "nodejs";
@@ -21,17 +24,19 @@ function keypairFromEnv(name: string) {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { wallet?: string };
-    let wallet: PublicKey;
+    const body = (await request.json()) as { wallet?: string; wallets?: string[]; demo?: boolean };
+    const walletTexts = body.wallets?.length ? body.wallets : body.wallet ? [body.wallet] : [];
+    let wallets: PublicKey[];
     try {
-      wallet = new PublicKey(body.wallet ?? "");
+      wallets = walletTexts.map((value) => new PublicKey(value));
     } catch {
       return Response.json({ error: "The connected wallet address is invalid." }, { status: 400 });
     }
+    if (!wallets.length || wallets.length > 3) return Response.json({ error: "Choose a valid wallet to fund." }, { status: 400 });
     const now = Date.now();
     const limitMs = Number(process.env.TEST_MONEY_RATE_LIMIT_MS ?? 3_600_000);
-    const previous = requests.get(wallet.toBase58()) ?? 0;
-    if (now - previous < limitMs) {
+    const previous = requests.get(wallets[0].toBase58()) ?? 0;
+    if (!body.demo && now - previous < limitMs) {
       return Response.json({ error: "Test funds were already requested recently." }, { status: 429 });
     }
 
@@ -46,18 +51,31 @@ export async function POST(request: Request) {
     const mint = new PublicKey(process.env.TEST_MINT_ADDRESS);
     const authority = keypairFromEnv("TEST_MONEY_AUTHORITY_SECRET_KEY");
     const connection = new Connection(rpc, "confirmed");
-    const ata = await getOrCreateAssociatedTokenAccount(connection, authority, mint, wallet);
     const usdc = BigInt(process.env.TEST_MONEY_USDC_AMOUNT ?? "100000000");
     const sol = Number(process.env.TEST_MONEY_SOL_LAMPORTS ?? "10000000");
-    const signature = await mintTo(connection, authority, mint, ata.address, authority, usdc);
-    const solSignature = await sendAndConfirmTransaction(
-      connection,
-      new Transaction().add(SystemProgram.transfer({ fromPubkey: authority.publicKey, toPubkey: wallet, lamports: sol })),
-      [authority],
-      { commitment: "confirmed" }
-    );
-    requests.set(wallet.toBase58(), now);
-    return Response.json({ signature, solSignature, usdc: usdc.toString() });
+    async function fund(wallet: PublicKey) {
+      const ata = await getAssociatedTokenAddress(mint, wallet);
+      const transaction = new Transaction().add(
+        createAssociatedTokenAccountIdempotentInstruction(authority.publicKey, ata, wallet, mint),
+        createMintToInstruction(mint, ata, authority.publicKey, usdc),
+        SystemProgram.transfer({ fromPubkey: authority.publicKey, toPubkey: wallet, lamports: sol })
+      );
+      const blockhash = await connection.getLatestBlockhash("confirmed");
+      transaction.feePayer = authority.publicKey;
+      transaction.recentBlockhash = blockhash.blockhash;
+      transaction.sign(authority);
+      const signature = await connection.sendRawTransaction(transaction.serialize(), { skipPreflight: false, maxRetries: 5 });
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const status = (await connection.getSignatureStatuses([signature])).value[0];
+        if (status?.err) throw new Error(JSON.stringify(status.err));
+        if (status?.confirmationStatus === "confirmed" || status?.confirmationStatus === "finalized") return signature;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      throw new Error("The funding transaction took too long to confirm.");
+    }
+    const signatures = await Promise.all(wallets.map(fund));
+    requests.set(wallets[0].toBase58(), now);
+    return Response.json({ signature: signatures[0], signatures, usdc: usdc.toString() });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     const friendly = /insufficient funds|insufficient lamports/i.test(message)

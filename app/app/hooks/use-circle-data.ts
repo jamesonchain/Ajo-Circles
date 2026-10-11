@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as anchor from "@coral-xyz/anchor";
 import { unpackAccount } from "@solana/spl-token";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { useConnection, useWallet, type WalletContextState } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import {
   AjoCirclesClient,
@@ -51,17 +51,20 @@ const readOnlyWallet = {
 type CircleAccount = Awaited<ReturnType<AjoCirclesClient["fetchCircle"]>>;
 type CircleRow = { address: PublicKey; account: CircleAccount };
 
-export function useCircleData(selectedCircleAddress = "") {
+export function useCircleData(selectedCircleAddress = "", walletOverride?: WalletContextState) {
   const { connection } = useConnection();
-  const wallet = useWallet();
+  const adapterWallet = useWallet();
+  const wallet = walletOverride ?? adapterWallet;
   const [circles, setCircles] = useState<CircleRow[]>([]);
   const [memberships, setMemberships] = useState<WalletCircle[]>([]);
   const [score, setScore] =
     useState<Awaited<ReturnType<AjoCirclesClient["fetchScore"]>>>(null);
   const [tokenBalance, setTokenBalance] = useState<bigint | null>(null);
+  const [solBalance, setSolBalance] = useState<bigint | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const rateLimitFailures = useRef(0);
+  const hasLoaded = useRef(false);
   const onRpcRetry = useCallback(() => {
     rateLimitFailures.current += 1;
     if (rateLimitFailures.current >= 3) setError("The network is busy, retrying");
@@ -94,7 +97,7 @@ export function useCircleData(selectedCircleAddress = "") {
   );
 
   const refresh = useCallback(async () => {
-    setLoading(true);
+    if (!hasLoaded.current) setLoading(true);
     setError("");
     try {
       const allCircles = await withRpcRetry(
@@ -122,6 +125,7 @@ export function useCircleData(selectedCircleAddress = "") {
         );
         setMemberships(walletCircles);
         setScore(walletScore);
+        setSolBalance(BigInt(await connection.getBalance(wallet.publicKey, "confirmed")));
         const [account] = (
           await withRpcRetry(
             () =>
@@ -143,10 +147,12 @@ export function useCircleData(selectedCircleAddress = "") {
         setMemberships([]);
         setScore(null);
         setTokenBalance(null);
+        setSolBalance(null);
       }
     } catch (cause) {
       if (!isRateLimited(cause)) setError("Circle information is unavailable right now");
     } finally {
+      hasLoaded.current = true;
       setLoading(false);
     }
   }, [client, connection, onRpcRetry, onRpcSuccess, wallet.publicKey]);
@@ -172,6 +178,7 @@ export function useCircleData(selectedCircleAddress = "") {
       });
       if (wallet.publicKey) {
         setScore(selectedScore);
+        setSolBalance(BigInt(await connection.getBalance(wallet.publicKey, "confirmed")));
         const walletPublicKey = wallet.publicKey;
         setMemberships((current) => {
           const withoutCircle = current.filter((row) => !row.circleAddress.equals(address));
@@ -192,7 +199,7 @@ export function useCircleData(selectedCircleAddress = "") {
     } catch (cause) {
       if (!isRateLimited(cause)) setError("Circle information is unavailable right now");
     }
-  }, [client, onRpcRetry, onRpcSuccess, selectedCircleAddress, wallet.publicKey]);
+  }, [client, connection, onRpcRetry, onRpcSuccess, selectedCircleAddress, wallet.publicKey]);
 
   const markCircleCancelled = useCallback((address: PublicKey) => {
     setCircles((current) =>
@@ -237,6 +244,7 @@ export function useCircleData(selectedCircleAddress = "") {
     memberships,
     score,
     tokenBalance,
+    solBalance,
     loading,
     error,
     refresh,

@@ -32,6 +32,7 @@ import {
 import { calculateDeposit, circleStatusName, type CircleMembership } from "ajo_circles_sdk";
 import { CircleRing } from "./components/circle-ring";
 import { useCircleData } from "./hooks/use-circle-data";
+import { useDemoWallet } from "./hooks/use-demo-wallet";
 
 const WalletMultiButton = dynamic(
   () =>
@@ -52,6 +53,10 @@ function amountText(amount: bigint | number | string) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(Number(amount) / 10 ** decimals);
+}
+
+function solText(amount: bigint | number | string) {
+  return new Intl.NumberFormat("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(Number(amount) / 1_000_000_000);
 }
 
 function compactAddress(address: string) {
@@ -202,19 +207,21 @@ function circleAddressFromInput(value: string) {
 export default function Home() {
   const [selectedAddress, setSelectedAddress] = useState("");
   const { connection } = useConnection();
+  const demo = useDemoWallet(connection);
   const {
     client,
     circles,
     memberships,
     score,
     tokenBalance,
+    solBalance,
     loading,
     error,
     refresh,
     refreshSelected,
     markCircleCancelled,
     wallet,
-  } = useCircleData(selectedAddress);
+  } = useCircleData(selectedAddress, demo.activeWallet ?? undefined);
   const [selectedMembers, setSelectedMembers] = useState<
     CircleMembership["member"][]
   >([]);
@@ -237,6 +244,9 @@ export default function Home() {
   const [testMoneyBusy, setTestMoneyBusy] = useState(false);
   const [showCancelled, setShowCancelled] = useState(false);
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+  const [creatorSlot, setCreatorSlot] = useState(0);
+  const [startMode, setStartMode] = useState<"full" | "demo">("full");
+  const [weekday, setWeekday] = useState("Wednesday");
 
   const selectedCircle = useMemo(
     () => circles.find(({ address }) => address.toBase58() === selectedAddress),
@@ -405,7 +415,7 @@ export default function Home() {
     }
     const amount = Math.round(Number(contribution) * 10 ** decimals);
     const membersCount = Number(maxMembers);
-    const periodSeconds = {
+    const periodSeconds = startMode === "demo" ? 60 : {
       daily: 86_400,
       weekly: 604_800,
       biweekly: 1_209_600,
@@ -458,6 +468,23 @@ export default function Home() {
           circle: address,
           mint: currentConfig.mint,
           depositVault: client.vault("deposit", address),
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        }),
+        createAssociatedTokenAccountIdempotentInstruction(
+          wallet.publicKey,
+          await getAssociatedTokenAddress(currentConfig.mint, wallet.publicKey),
+          wallet.publicKey,
+          currentConfig.mint
+        ),
+        await client.joinCircle(creatorSlot, {
+          wallet: wallet.publicKey,
+          config: client.config,
+          circle: address,
+          member: client.member(address, wallet.publicKey),
+          source: await getAssociatedTokenAddress(currentConfig.mint, wallet.publicKey),
+          depositVault: client.vault("deposit", address),
+          mint: currentConfig.mint,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: anchor.web3.SystemProgram.programId,
         }),
@@ -779,12 +806,16 @@ export default function Home() {
       const response = await fetch("/api/test-money", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ wallet: wallet.publicKey.toBase58() }),
+        body: JSON.stringify(
+          demo.mode === "demo"
+            ? { wallets: demo.wallets.map(({ publicKey }) => publicKey.toBase58()), demo: true }
+            : { wallet: wallet.publicKey.toBase58() }
+        ),
       });
       const result = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(result.error ?? "Test money could not be sent.");
       await refresh();
-      showNotice("Test USDC and devnet SOL sent to your wallet.");
+      showNotice(demo.mode === "demo" ? "Demo wallets funded with test USDC and devnet SOL." : "Test USDC and devnet SOL sent to your wallet.");
     } catch (cause) {
       showNotice(cause instanceof Error ? cause.message : "Test money could not be sent.", true);
     } finally {
@@ -935,7 +966,22 @@ export default function Home() {
           <a href="#circles">Circles</a>
           <a href="#directory">Open circles</a>
           <a href="#score">Ajo Score</a>
-          <WalletMultiButton className="wallet-button" />
+          <div className="wallet-switcher" aria-label="Wallet mode">
+            <button className={demo.mode === "phantom" ? "wallet-mode-active" : ""} onClick={() => demo.setMode("phantom")}>Phantom</button>
+            <button className={demo.mode === "demo" ? "wallet-mode-active" : ""} onClick={() => demo.setMode("demo")}>Demo wallets</button>
+          </div>
+          {demo.mode === "phantom" ? (
+            <WalletMultiButton className="wallet-button" />
+          ) : (
+            <div className="demo-wallet-picker">
+              <select value={demo.activeIndex} onChange={(event) => demo.setActiveIndex(Number(event.target.value))} aria-label="Active demo wallet">
+                {demo.wallets.map((demoWallet, index) => <option key={demoWallet.publicKey.toBase58()} value={index}>{demoWallet.name}</option>)}
+              </select>
+              <small>Demo wallet, test money only · {demo.wallets[demo.activeIndex] ? compactAddress(demo.wallets[demo.activeIndex].publicKey.toBase58()) : "Loading"}</small>
+              <small>{solText(solBalance ?? 0n)} SOL · {amountText(tokenBalance ?? 0n)} USDC</small>
+              <button className="switch-phantom" onClick={() => demo.setMode("phantom")}>Switch to Phantom</button>
+            </div>
+          )}
         </nav>
       </header>
 
@@ -962,7 +1008,7 @@ export default function Home() {
             <Plus size={18} /> Create circle
           </button>
           <button className="button button-outline" onClick={() => void requestTestMoney()} disabled={testMoneyBusy || !wallet.publicKey}>
-            <Wallet size={17} /> {testMoneyBusy ? "Sending test money" : "Get test money"}
+            <Wallet size={17} /> {testMoneyBusy ? "Funding wallets" : demo.mode === "demo" ? "Fund demo wallets" : "Get test money"}
           </button>
         </div>
       </section>
@@ -988,6 +1034,10 @@ export default function Home() {
                 : `${amountText(tokenBalance)} USDC`}
             </strong>
             <span>your test balance</span>
+          </div>
+          <div className="stat">
+            <strong>{solBalance === null ? "Connect" : `${solText(solBalance)} SOL`}</strong>
+            <span>devnet balance</span>
           </div>
         </div>
       </section>
@@ -1576,15 +1626,33 @@ export default function Home() {
                     {Array.from({ length: 10 }, (_, index) => index + 3).map((count) => <option key={count} value={count}>{count} members</option>)}
                   </select>
                 </label>
+                <label>Creator turn
+                  <select value={creatorSlot} onChange={(event) => setCreatorSlot(Number(event.target.value))}>
+                    {Array.from({ length: Number(maxMembers) }, (_, slot) => <option key={slot} value={slot}>Turn {slot + 1}</option>)}
+                  </select>
+                </label>
+                <label>When should payments start?
+                  <select value={startMode} onChange={(event) => setStartMode(event.target.value as "full" | "demo")}>
+                    <option value="full">When the circle is full</option>
+                    <option value="demo">Demo: start now with a 60 second period</option>
+                  </select>
+                </label>
+                {startMode === "full" && <p className="form-help">Payments follow your chosen weekday.</p>}
+                {startMode === "full" && <label>Payment weekday
+                  <select value={weekday} onChange={(event) => setWeekday(event.target.value)}>
+                    {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day) => <option key={day}>{day}</option>)}
+                  </select>
+                </label>}
                 </>}
                 {createStep === 3 && <>
                 <div className="wizard-progress">Step 3 of 3, review deposits</div>
-                <div className="join-preview"><strong>{circleName}</strong><span>{contribution} USDC each round, {frequency === "biweekly" ? "every two weeks" : frequency === "daily" ? "every day" : frequency === "monthly" ? "every month" : "every week"}</span><span>{maxMembers} member turns</span></div>
+                <div className="join-preview"><strong>{circleName}</strong><span>{contribution} USDC each round, {startMode === "demo" ? "demo period of 60 seconds" : `every ${weekday}`}</span><span>{maxMembers} member turns, creator chooses turn {creatorSlot + 1}</span></div>
                 <div className="slot-deposit-list">
                   {Array.from({ length: Number(maxMembers) }, (_, slot) => (
                     <div className="slot-deposit-row" key={slot}><span>Turn {slot + 1}{slot === 0 ? ", earliest" : ""}</span><strong>{amountText(calculateDeposit(BigInt(Math.round(Number(contribution) * 10 ** decimals)), Number(maxMembers), slot))} USDC</strong></div>
                   ))}
                 </div>
+                <div className="deposit-note"><ShieldCheck size={17} /><span>You will pay {amountText(BigInt(Math.round(Number(contribution) * 10 ** decimals)) * BigInt(Math.max(1, Number(maxMembers) - 1 - creatorSlot)))} USDC as your protected deposit. Your first contribution is paid when the circle is active.</span></div>
                 <div className="deposit-note"><ShieldCheck size={17} /><span>Earlier turns hold a larger deposit. Your unused amount can be withdrawn after the circle is complete.</span></div>
                 </>}
                 {createStep > 1 && <button type="button" className="button button-quiet form-submit" onClick={() => setCreateStep((step) => step - 1)}>Back</button>}
