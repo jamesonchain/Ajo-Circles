@@ -123,3 +123,32 @@ Open circles now means only non hidden Forming circles with an available turn. M
 ## 2026 10 11 decoded account shape fix
 
 SDK account decoding now recursively converts snake case fields to camel case while preserving BN, PublicKey, bigint, byte arrays, and arrays. SDK fetch and list methods use the same normalization, and the app safely rehydrates directory accounts through the SDK helpers. Sorting has an address fallback, arithmetic and number rendering have safe defaults, and malformed directory accounts are skipped with warnings. App typecheck, ESLint, and the offline SDK suite passed 5 tests with the gated real devnet test skipped when network access was unavailable.
+
+## 2026 10 11 round and payment state
+
+The selected circle loader now fetches the Circle account, every directory Member account, both vault accounts, and the mint account in one `getMultipleAccountsInfo` call. Vault amounts use the mint owner as the token program, missing vault accounts show zero, and the ring now shows both the circle pot and protected deposits. Joined members use `depositTotal` and show their turn and paid deposit, while round payment status is separate and reports Paid, Due, or Covered by deposit. The selected panel includes a hidden `?debug=1` raw account and vault data panel.
+
+The claim path now derives the recipient associated token account with the mint token program and logs full simulation failures through the existing transaction dispatcher. Claim readiness and remaining payment reasons are shown in the selected circle, and settle default derives the token program from the mint.
+
+Devnet verification passed with the three wallet script. The script used a 60 second period and printed these final results:
+
+```text
+PASS: three wallets funded
+PASS: creator shows 1 / 3
+BALANCES: creator joined pot=0 protected=20000000
+PASS: wallet two joins and its USDC drops
+BALANCES: wallet two joined pot=0 protected=30000000
+PASS: wallet three joins and circle is full
+BALANCES: wallet three joined pot=0 protected=40000000
+PASS: wallet one pays round one
+BALANCES: wallet one paid pot=10000000 protected=40000000
+PASS: wallet three pays round one
+BALANCES: wallet three paid pot=20000000 protected=40000000
+PASS: covered default settles
+BALANCES: default covered pot=30000000 protected=30000000
+PASS: turn holder claims payout
+BALANCES: payout claimed pot=0 protected=30000000
+Circle: 3biCrH6JumLyPxS1XTiJatFpRKg5U6FojL9bnTE7raWj
+```
+
+The confirmed action signatures were recorded by the script for funding, creation, both joins, both payments, default settlement, and payout claim. App typecheck and ESLint pass. Browser visual verification was unavailable in this session.

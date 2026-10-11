@@ -11,6 +11,7 @@ type CircleRingProps = {
   circle: CircleMembership["circle"] | null;
   members: RingMember[];
   potAmount: bigint;
+  depositAmount: bigint;
 };
 
 function formatUsdc(amount: bigint) {
@@ -26,7 +27,7 @@ function shortWallet(wallet: string) {
   return `${wallet.slice(0, 3)}...${wallet.slice(-3)}`;
 }
 
-export function CircleRing({ circle, members, potAmount }: CircleRingProps) {
+export function CircleRing({ circle, members, potAmount, depositAmount }: CircleRingProps) {
   const count = circle?.maxMembers ?? 5;
   const currentRound = circle?.currentRound ?? 0;
   const turn = members.find((member) => member.slot === currentRound);
@@ -74,6 +75,7 @@ export function CircleRing({ circle, members, potAmount }: CircleRingProps) {
             ? `${shortWallet(turn.wallet)} receives it`
             : "Live circle balance"}
         </span>
+        <span className="muted">Protected deposits: {formatUsdc(depositAmount)}</span>
       </div>
       {members.map((member) => {
         const angle = (member.slot / count) * 360 - 90;

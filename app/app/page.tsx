@@ -6,7 +6,9 @@ import dynamic from "next/dynamic";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   getAssociatedTokenAddress,
+  getAssociatedTokenAddressSync,
   createAssociatedTokenAccountIdempotentInstruction,
   unpackAccount,
 } from "@solana/spl-token";
@@ -28,7 +30,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { calculateDeposit, circleStatusName, type CircleMembership } from "ajo_circles_sdk";
+import { calculateDeposit, circleStatusName, decodeCircle, decodeMember, type CircleMembership } from "ajo_circles_sdk";
 import { CircleRing } from "./components/circle-ring";
 import { useCircleData } from "./hooks/use-circle-data";
 import { useDemoWallet } from "./hooks/use-demo-wallet";
@@ -175,6 +177,12 @@ function deadlineText(deadline: bigint, now = 0) {
   return `${Math.max(1, minutes)}m`;
 }
 
+function countdownText(deadline: bigint, now = 0) {
+  const seconds = Math.max(0, Number(deadline) - Math.floor(now / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 function frequencyText(periodSecs: unknown) {
   const seconds = numericValue(periodSecs);
   if (seconds === 86_400) return "day";
@@ -254,6 +262,7 @@ export default function Home() {
     CircleMembership["member"][]
   >([]);
   const [potAmount, setPotAmount] = useState(0n);
+  const [depositAmount, setDepositAmount] = useState(0n);
   const [dialog, setDialog] = useState<"create" | "join" | null>(null);
   const [circleAddressInput, setCircleAddressInput] = useState("");
   const [joinSlot, setJoinSlot] = useState<number | null>(null);
@@ -332,25 +341,54 @@ export default function Home() {
       if (!selectedCircle) {
         setSelectedMembers([]);
         setPotAmount(0n);
+        setDepositAmount(0n);
         return;
       }
       try {
-        const vaultAddress = client.vault("pot", selectedCircle.address);
-        const [members, vaultInfo] = await Promise.all([
-          Promise.resolve(directoryMembers.filter(({ account }) => account.circle.equals(selectedCircle.address))),
-          connection
-            .getMultipleAccountsInfo([vaultAddress], "confirmed")
-            .then(([account]) =>
-              account ? unpackAccount(vaultAddress, account, selectedCircle.account.mint) : null
-            ),
-        ]);
+        const memberRows = directoryMembers.filter(({ account }) => account.circle.equals(selectedCircle.address));
+        const potVault = client.vault("pot", selectedCircle.address);
+        const depositVault = client.vault("deposit", selectedCircle.address);
+        const addresses = [
+          selectedCircle.address,
+          ...memberRows.map(({ address }) => address),
+          potVault,
+          depositVault,
+          selectedCircle.account.mint,
+        ];
+        const accounts = await connection.getMultipleAccountsInfo(addresses, "confirmed");
+        const circleInfo = accounts[0];
+        const mintInfo = accounts.at(-1);
+        if (!circleInfo || !mintInfo) throw new Error("Selected circle data is unavailable.");
+        const freshCircle = decodeCircle(circleInfo.data);
+        const memberStart = 1;
+        const freshMembers = memberRows.flatMap(({ address }, index) => {
+          const info = accounts[memberStart + index];
+          if (!info) return [];
+          return [{ address, account: decodeMember(info.data) }];
+        });
+        const tokenProgram = mintInfo.owner;
+        const potInfo = accounts[1 + memberRows.length];
+        const depositInfo = accounts[2 + memberRows.length];
+        const unpack = (address: anchor.web3.PublicKey, info: typeof potInfo) => {
+          if (!info || (!tokenProgram.equals(TOKEN_PROGRAM_ID) && !tokenProgram.equals(TOKEN_2022_PROGRAM_ID))) return 0n;
+          try {
+            return unpackAccount(address, info, tokenProgram).amount;
+          } catch {
+            return 0n;
+          }
+        };
         if (cancelled) return;
-        setSelectedMembers(members.map(({ account }) => account));
-        setPotAmount(vaultInfo?.amount ?? 0n);
+        setSelectedMembers(freshMembers.map(({ account }) => account));
+        setPotAmount(unpack(potVault, potInfo));
+        setDepositAmount(unpack(depositVault, depositInfo));
+        if (!freshCircle.creator.equals(selectedCircle.account.creator)) {
+          throw new Error("The selected circle account changed while loading.");
+        }
       } catch {
         if (!cancelled) {
           setSelectedMembers([]);
           setPotAmount(0n);
+          setDepositAmount(0n);
         }
       }
     }
@@ -750,6 +788,11 @@ export default function Home() {
       return;
     }
     try {
+      const mintInfo = await connection.getAccountInfo(selectedCircle.account.mint, "confirmed");
+      const tokenProgram = mintInfo?.owner;
+      if (!tokenProgram || (!tokenProgram.equals(TOKEN_PROGRAM_ID) && !tokenProgram.equals(TOKEN_2022_PROGRAM_ID))) {
+        throw new Error("The circle mint token program is unavailable.");
+      }
       await sendInstruction(
         "Payment covered",
         await client.settleDefault({
@@ -759,7 +802,7 @@ export default function Home() {
           depositVault: client.vault("deposit", selectedCircle.address),
           potVault: client.vault("pot", selectedCircle.address),
           mint: selectedCircle.account.mint,
-          tokenProgram: TOKEN_PROGRAM_ID,
+          tokenProgram,
         })
       );
     } catch (cause) {
@@ -775,6 +818,11 @@ export default function Home() {
     if (!recipient) return;
     try {
       const currentConfig = await client.fetchConfig();
+      const mintInfo = await connection.getAccountInfo(currentConfig.mint, "confirmed");
+      const tokenProgram = mintInfo?.owner;
+      if (!tokenProgram || (!tokenProgram.equals(TOKEN_PROGRAM_ID) && !tokenProgram.equals(TOKEN_2022_PROGRAM_ID))) {
+        throw new Error("The circle mint token program is unavailable.");
+      }
       await sendInstruction(
         "Pot claimed",
         await client.claimPayout({
@@ -790,11 +838,13 @@ export default function Home() {
           depositVault: client.vault("deposit", selectedCircle.address),
           treasury: currentConfig.treasury,
           mint: currentConfig.mint,
-          recipientTokenAccount: await getAssociatedTokenAddress(
+          recipientTokenAccount: getAssociatedTokenAddressSync(
             currentConfig.mint,
-            recipient.wallet
+            recipient.wallet,
+            true,
+            tokenProgram
           ),
-          tokenProgram: TOKEN_PROGRAM_ID,
+          tokenProgram,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -1037,7 +1087,7 @@ export default function Home() {
     ? { label: "Claim payout", action: claimCurrentPayout, icon: ArrowDownToLine }
     : selectedIsActive && selectedMembership?.member && !currentRoundPaid
     ? {
-        label: memberTurn ? "Your turn" : "Pay now",
+        label: `Pay round ${safeCount(selectedCircle?.account.currentRound) + 1}, ${amountText(selectedCircle?.account.contribution)} USDC`,
         action: payCurrentRound,
         icon: ArrowUpRight,
       }
@@ -1045,6 +1095,17 @@ export default function Home() {
     ? { label: "Waiting for others", action: undefined, icon: Clock3 }
     : null;
   const ActionIcon = primaryAction?.icon;
+  const unpaidCount = selectedMembers.filter((member) => (member.paidBitmask & currentRoundBit) === 0).length;
+  const claimDisabledReason = !selectedIsActive
+    ? "This circle is not active."
+    : !isRecipient
+    ? "Not your turn."
+    : !roundComplete
+    ? deadlinePassed
+      ? `Pot is empty, ${unpaidCount} members still need to pay round ${safeCount(selectedCircle?.account.currentRound) + 1}.`
+      : `Round ends in ${countdownText(roundDeadline, clock)}.`
+    : "The payout is ready.";
+  const debugMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("debug") === "1";
   const timelineRounds = selectedCircle
     ? Array.from({ length: safeCount(selectedCircle.account.maxMembers) }, (_, round) => {
         const recipient = selectedMembers.find((member) => member.slot === round);
@@ -1384,6 +1445,7 @@ export default function Home() {
               circle={selectedCircle?.account ?? null}
               members={ringMembers}
               potAmount={potAmount}
+              depositAmount={depositAmount}
             />
           </div>
           <div className="selected-details">
@@ -1434,7 +1496,7 @@ export default function Home() {
             </div>
             <div className="primary-action-row">
               {selectedMember ? (
-                <p className="member-state-line">You are a member, turn {selectedMember.slot + 1}, deposit {amountText(selectedMember.depositRemaining)} USDC.</p>
+                <p className="member-state-line">You are a member, turn {selectedMember.slot + 1}, deposit {amountText(selectedMember.depositTotal)} USDC paid. {currentRoundPaid ? `Paid for round ${safeCount(selectedCircle?.account.currentRound) + 1}.` : "Your round payment is due."}</p>
               ) : selectedIsCreator ? (
                 <p className="member-state-line">You created this circle. Choose a turn to join it.</p>
               ) : null}
@@ -1461,6 +1523,9 @@ export default function Home() {
                 >
                   {ActionIcon && <ActionIcon size={18} />} {primaryAction.label}
                 </button>
+              )}
+              {selectedIsActive && selectedMembership?.member && !roundComplete && (
+                <p className="muted-copy">{claimDisabledReason}</p>
               )}
               {selectedCancelled && selectedMembership?.member && selectedMembership.member.depositRemaining.gt(new anchor.BN(0)) && (
                 <p className="muted-copy refund-note">This circle was cancelled. Refund your deposit to return your funds.</p>
@@ -1540,10 +1605,32 @@ export default function Home() {
                   <div className="member-list">
                     {selectedMembers.map((member) => {
                       const paid = (member.paidBitmask & currentRoundBit) !== 0;
-                      return <div className="member-row" key={member.wallet.toBase58()}><span><strong>Turn {member.slot + 1}</strong><small>{compactAddress(member.wallet.toBase58())}</small></span><span className={`member-badge ${paid ? "member-paid" : member.defaults > 0 ? "member-missed" : "member-due"}`}>{paid ? "Paid" : member.defaults > 0 ? "Missed" : "Due"}</span></div>;
+                      const status = member.defaults > 0 ? "Covered by deposit" : paid ? "Paid" : "Due";
+                      return <div className="member-row" key={member.wallet.toBase58()}><span><strong>Turn {member.slot + 1}</strong><small>{compactAddress(member.wallet.toBase58())}</small></span><span className={`member-badge ${member.defaults > 0 ? "member-missed" : paid ? "member-paid" : "member-due"}`}>{status}</span></div>;
                     })}
                   </div>
                 </div>
+                {debugMode && (
+                  <pre className="debug-panel">{JSON.stringify({
+                    status: statusName(selectedCircle.account.status),
+                    currentRound: safeCount(selectedCircle.account.currentRound),
+                    roundStartTs: selectedCircle.account.roundStartTs?.toString() ?? "0",
+                    periodSecs: selectedCircle.account.periodSecs?.toString() ?? "0",
+                    maxMembers: safeCount(selectedCircle.account.maxMembers),
+                    memberCount: safeCount(selectedCircle.account.memberCount),
+                    potVaultBalance: potAmount.toString(),
+                    depositVaultBalance: depositAmount.toString(),
+                    members: selectedMembers.map((member) => ({
+                      wallet: member.wallet.toBase58(),
+                      turn: safeCount(member.slot) + 1,
+                      depositAmount: member.depositTotal?.toString() ?? "0",
+                      depositPaid: Boolean(member.depositTotal && member.depositTotal.gt(new anchor.BN(0))),
+                      lastPaidRound: safeCount(member.paidBitmask),
+                      defaults: safeCount(member.defaults),
+                      claimed: Boolean(member.received),
+                    })),
+                  }, null, 2)}</pre>
+                )}
               </>
             )}
           </div>

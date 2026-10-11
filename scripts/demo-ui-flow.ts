@@ -1,5 +1,6 @@
 import * as anchor from "@coral-xyz/anchor";
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountIdempotentInstruction,
   createMintToInstruction,
   getAssociatedTokenAddress,
@@ -46,6 +47,12 @@ async function send(label: string, signer: Keypair, instructions: anchor.web3.Tr
   return signature;
 }
 
+async function vaultBalances(circle: PublicKey, label: string) {
+  const pot = await getAccount(connection as unknown as Parameters<typeof getAccount>[0], client.vault("pot", circle));
+  const deposit = await getAccount(connection as unknown as Parameters<typeof getAccount>[0], client.vault("deposit", circle));
+  console.log(`BALANCES: ${label} pot=${pot.amount.toString()} protected=${deposit.amount.toString()}`);
+}
+
 async function fund(recipient: Keypair) {
   const ata = await getAssociatedTokenAddress(mint, recipient.publicKey);
   await send(`fund ${recipient.publicKey.toBase58()}`, faucet, [
@@ -61,6 +68,7 @@ function pass(label: string, value: boolean) {
 }
 
 await Promise.all(wallets.map(fund));
+pass("three wallets funded", wallets.length === 3);
 const config = await client.fetchConfig();
 const circleId = new anchor.BN(Date.now());
 const circle = client.circle(wallets[0].publicKey, circleId);
@@ -76,6 +84,7 @@ await send("create circle and join creator", wallets[0], [
   await client.joinCircle(0, { wallet: wallets[0].publicKey, config: client.config, circle, member: client.member(circle, wallets[0].publicKey), source: creatorSource, depositVault, mint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId }),
 ]);
 pass("creator shows 1 / 3", (await client.fetchCircle(circle)).memberCount === 1);
+await vaultBalances(circle, "creator joined");
 const secondSource = await getAssociatedTokenAddress(mint, wallets[1].publicKey);
 const beforeSecond = (await getAccount(connection as unknown as Parameters<typeof getAccount>[0], secondSource)).amount;
 await send("join wallet two by link", wallets[1], [
@@ -84,16 +93,41 @@ await send("join wallet two by link", wallets[1], [
 ]);
 const afterSecond = (await getAccount(connection as unknown as Parameters<typeof getAccount>[0], secondSource)).amount;
 pass("wallet two joins and its USDC drops", (await client.fetchCircle(circle)).memberCount === 2 && afterSecond < beforeSecond);
+await vaultBalances(circle, "wallet two joined");
 const thirdSource = await getAssociatedTokenAddress(mint, wallets[2].publicKey);
 await send("join wallet three by link", wallets[2], [
   createAssociatedTokenAccountIdempotentInstruction(wallets[2].publicKey, thirdSource, wallets[2].publicKey, mint),
   await client.joinCircle(2, { wallet: wallets[2].publicKey, config: client.config, circle, member: client.member(circle, wallets[2].publicKey), source: thirdSource, depositVault, mint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId }),
 ]);
 pass("wallet three joins and circle is full", (await client.fetchCircle(circle)).memberCount === 3);
+await vaultBalances(circle, "wallet three joined");
 await send("wallet one pays", wallets[0], [await client.contribute({ wallet: wallets[0].publicKey, config: client.config, circle, member: client.member(circle, wallets[0].publicKey), source: creatorSource, potVault, mint, tokenProgram: TOKEN_PROGRAM_ID })]);
+pass("wallet one pays round one", true);
+await vaultBalances(circle, "wallet one paid");
 await send("wallet three pays", wallets[2], [await client.contribute({ wallet: wallets[2].publicKey, config: client.config, circle, member: client.member(circle, wallets[2].publicKey), source: thirdSource, potVault, mint, tokenProgram: TOKEN_PROGRAM_ID })]);
+pass("wallet three pays round one", true);
+await vaultBalances(circle, "wallet three paid");
 await new Promise((resolve) => setTimeout(resolve, 61_000));
 await send("cover wallet two default", wallets[0], [await client.settleDefault({ caller: wallets[0].publicKey, circle, member: client.member(circle, wallets[1].publicKey), depositVault, potVault, mint, tokenProgram: TOKEN_PROGRAM_ID })]);
 pass("covered default settles", (await client.fetchMemberForWallet(circle, wallets[1].publicKey))?.defaults === 1);
+await vaultBalances(circle, "default covered");
+const recipientTokenAccount = await getAssociatedTokenAddress(mint, wallets[0].publicKey);
+await send("wallet one claims round one", wallets[0], [await client.claimPayout({
+  caller: wallets[0].publicKey,
+  config: client.config,
+  circle,
+  recipientMember: client.member(circle, wallets[0].publicKey),
+  recipientWallet: wallets[0].publicKey,
+  potVault,
+  depositVault,
+  treasury: config.treasury,
+  mint,
+  recipientTokenAccount,
+  tokenProgram: TOKEN_PROGRAM_ID,
+  associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+  systemProgram: SystemProgram.programId,
+})]);
+pass("turn holder claims payout", true);
+await vaultBalances(circle, "payout claimed");
 console.log(`Circle: ${circle.toBase58()}`);
 console.log(signatures.join("\n"));
