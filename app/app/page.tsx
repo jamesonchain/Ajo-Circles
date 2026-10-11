@@ -47,6 +47,20 @@ const WalletMultiButton = dynamic(
 
 const explorerBase = "https://explorer.solana.com/address";
 const decimals = 6;
+const HIDDEN_CIRCLE_ADDRESSES = [
+  "Ahy8nFmofWTSN3Pxcsa7jRMbm7rMddtRjQXYJrh2tSDd",
+  "AuA6DgMJUSi57Nr13b7N2cK6fSt1i3paq7S3MVCKtQQB",
+  "GnCn3wyL4h1MB38arFNj4EYYJyjfJQVwdDn3w1E3aBot",
+  "CpEYYCErAQN1NdmcYhfAfJQsBR3P6ngoWB7xna4SM2Sa",
+  "CU8i9Yg43chjyRL6qHbFcmoBXvvpoWKnxSb1V747KVpH",
+  "FzW6QeQRvS6jgU6USHb5GGrbqjQ5theHovaYJXAzNNQT",
+  "5au6tvygtVnPAdtFd4awMuinisKBEHYzmSwSkEP6FAF7",
+  "64YPHfrKsjZkR6H9eUKYSKrzan6rXfSHJNAKs4VcFsy7",
+] as const;
+const hiddenCircleAddresses = new Set([
+  ...HIDDEN_CIRCLE_ADDRESSES,
+  ...(process.env.NEXT_PUBLIC_HIDDEN_CIRCLES ?? "").split(",").map((value) => value.trim()).filter(Boolean),
+]);
 
 function numericValue(value: unknown) {
   if (value === null || value === undefined || value === "") return 0;
@@ -261,6 +275,7 @@ export default function Home() {
   const [creatorSlot, setCreatorSlot] = useState(0);
   const [startMode, setStartMode] = useState<"full" | "demo">("full");
   const [weekday, setWeekday] = useState("Wednesday");
+  const [showArchive, setShowArchive] = useState(false);
   const [accountSwitchAddress, setAccountSwitchAddress] = useState("");
   const previousWalletAddress = useRef<string | null>(null);
   const accountSwitchPending = Boolean(accountSwitchAddress);
@@ -284,6 +299,12 @@ export default function Home() {
   const activeCount = circles.filter(({ account }) =>
     isActive(account.status)
   ).length;
+  const openCircles = circles.filter(({ address, account }) =>
+    !hiddenCircleAddresses.has(address.toBase58()) &&
+    circleStatusName(account.status) === "forming" &&
+    safeCount(account.memberCount) < safeCount(account.maxMembers)
+  );
+  const archiveCircles = circles.filter(({ address }) => !hiddenCircleAddresses.has(address.toBase58()));
   const totalMembers = circles.reduce(
     (sum, row) => sum + numericValue(row.account?.memberCount),
     0
@@ -1114,6 +1135,10 @@ export default function Home() {
             <span>circles on chain</span>
           </div>
           <div className="stat">
+            <strong>{loading ? "..." : openCircles.length}</strong>
+            <span>open now</span>
+          </div>
+          <div className="stat">
             <strong>{loading ? "..." : activeCount}</strong>
             <span>active circles</span>
           </div>
@@ -1530,42 +1555,24 @@ export default function Home() {
           <div>
             <span className="eyebrow">Onchain directory</span>
             <h2>Open circles</h2>
+            <button className="archive-link" onClick={() => setShowArchive((value) => !value)}>
+              {showArchive ? "Hide archive" : "Show all circles on chain"}
+            </button>
           </div>
           <span className="directory-count">
-            {
-              circles.filter(
-                ({ account }) =>
-                  !Object.prototype.hasOwnProperty.call(
-                    account.status,
-                    "completed"
-                  ) &&
-                  !Object.prototype.hasOwnProperty.call(
-                    account.status,
-                    "cancelled"
-                  )
-              ).length
-            }{" "}
-            listed
+            {showArchive ? archiveCircles.length : openCircles.length} listed
           </span>
         </div>
-        {circles.length === 0 ? (
+        {!showArchive && openCircles.length === 0 ? (
           <div className="directory-empty">
-            No circles have been created on this network yet.
+            <p>No open circles right now. Create the first one.</p>
+            <button className="button button-gold" onClick={() => setDialog("create")}>
+              <Plus size={17} /> Create circle
+            </button>
           </div>
         ) : (
           <div className="directory-grid">
-            {circles
-              .filter(
-                ({ account }) =>
-                  !Object.prototype.hasOwnProperty.call(
-                    account.status,
-                    "completed"
-                  ) &&
-                  !Object.prototype.hasOwnProperty.call(
-                    account.status,
-                    "cancelled"
-                  )
-              )
+            {(showArchive ? archiveCircles : openCircles)
               .map(({ address, account }) => {
                 const spots = safeCount(account.maxMembers) - safeCount(account.memberCount);
                 const membership = memberships.find(({ circleAddress }) => circleAddress.equals(address));
@@ -1609,9 +1616,9 @@ export default function Home() {
                       >
                         View and join
                       </button>
-                    ) : (
-                      <span className="full-label">Full</span>
-                    )}
+                    ) : showArchive ? (
+                      <span className="state-pill">{statusName(account.status)}</span>
+                    ) : null}
                   </article>
                 );
               })}

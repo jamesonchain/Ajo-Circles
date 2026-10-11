@@ -116,6 +116,10 @@ The real devnet decoder test passed for Circle `CU8i9Yg43chjyRL6qHbFcmoBXvvpoWKn
 
 SOL and test USDC reads are now independent. SOL uses `getBalance`; USDC resolves the mint owner once, derives the associated token account with the matching token program, and treats missing or invalid token accounts as zero without raising the RPC banner. Join and payment balance checks use the same token helper. Status rendering now normalizes Anchor enum variants through one helper, so forming, active, completed, and cancelled circles map correctly and active totals count active circles. Empty RPC errors now use a readable fallback. App typecheck and ESLint pass.
 
+## 2026 10 11 open circles cleanup
+
+Open circles now means only non hidden Forming circles with an available turn. My circles remains independent, so a creator or member still sees their circle, including cancelled circles through Show cancelled. The directory archive is collapsed by default and exposes every non hidden onchain circle with its status. The requested eight test circles are hidden from Open circles and the archive, while direct links and My circles remain available. Stats now show total circles, open now, and active circles. App typecheck and ESLint pass. Browser visual verification was unavailable in this session.
+
 ## 2026 10 11 decoded account shape fix
 
 SDK account decoding now recursively converts snake case fields to camel case while preserving BN, PublicKey, bigint, byte arrays, and arrays. SDK fetch and list methods use the same normalization, and the app safely rehydrates directory accounts through the SDK helpers. Sorting has an address fallback, arithmetic and number rendering have safe defaults, and malformed directory accounts are skipped with warnings. App typecheck, ESLint, and the offline SDK suite passed 5 tests with the gated real devnet test skipped when network access was unavailable.
