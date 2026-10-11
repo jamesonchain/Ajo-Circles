@@ -15,6 +15,7 @@ import {
 import { useConnection } from "@solana/wallet-adapter-react";
 import { ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
 import { motion } from "framer-motion";
+import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import {
   ArrowDownToLine,
   ArrowUpRight,
@@ -162,19 +163,6 @@ function walletErrorText(error: unknown) {
   return "Your wallet could not complete that request.";
 }
 
-function notifyWalletRequest(pending: boolean) {
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("ajo-wallet-request", { detail: pending }));
-  }
-}
-
-function withTimeout<T>(promise: Promise<T>, milliseconds: number) {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Phantom did not respond, try again")), milliseconds)),
-  ]);
-}
-
 function deadlineText(deadline: bigint, now = 0) {
   if (!now) return "Calculating";
   const seconds = Number(deadline) - Math.floor(now / 1000);
@@ -249,6 +237,7 @@ function circleAddressFromInput(value: string) {
 export default function Home() {
   const [selectedAddress, setSelectedAddress] = useState("");
   const { connection } = useConnection();
+  const { setVisible } = useWalletModal();
   const demo = useDemoWallet(connection);
   const {
     client,
@@ -494,17 +483,9 @@ export default function Home() {
   }, [demo.mode, handleAccountSwitch, wallet.wallet]);
 
   async function signInWithSwitchedAccount() {
-    try {
-      await wallet.disconnect();
-      notifyWalletRequest(true);
-      await withTimeout(wallet.connect(), 15_000);
-      setAccountSwitchAddress("");
-      await refresh();
-    } catch (cause) {
-      showNotice(walletErrorText(cause), true);
-    } finally {
-      notifyWalletRequest(false);
-    }
+    await wallet.disconnect();
+    setAccountSwitchAddress("");
+    setVisible(true);
   }
 
   const sendInstruction = useCallback(
@@ -535,22 +516,17 @@ export default function Home() {
         const simulation = await connection.simulateTransaction(transaction);
         if (simulation.value.err) throw simulationFailure(simulation.value);
         let signature: string;
-        notifyWalletRequest(true);
-        try {
-          if (transaction.serialize({ requireAllSignatures: false }).length > 1_232 && wallet.signAllTransactions) {
-            const [signed] = await withTimeout(wallet.signAllTransactions([transaction]), 45_000);
-            signature = await connection.sendRawTransaction(signed.serialize(), {
-              skipPreflight: false,
-              maxRetries: 5,
-            });
-          } else {
-            signature = await withTimeout(wallet.sendTransaction(transaction, connection, {
-              skipPreflight: false,
-              maxRetries: 5,
-            }), 45_000);
-          }
-        } finally {
-          notifyWalletRequest(false);
+        if (transaction.serialize({ requireAllSignatures: false }).length > 1_232 && wallet.signAllTransactions) {
+          const [signed] = await wallet.signAllTransactions([transaction]);
+          signature = await connection.sendRawTransaction(signed.serialize(), {
+            skipPreflight: false,
+            maxRetries: 5,
+          });
+        } else {
+          signature = await wallet.sendTransaction(transaction, connection, {
+            skipPreflight: false,
+            maxRetries: 5,
+          });
         }
         setNotice(`${label}, waiting for confirmation`);
         await confirmSignature(connection, signature, blockhash);
@@ -1234,8 +1210,8 @@ export default function Home() {
 
       {accountSwitchPending && (
         <div className="account-switch-banner" role="status">
-          Phantom switched to {compactAddress(accountSwitchAddress)}. Sign in with this account to continue.
-          <button className="button button-primary" onClick={() => void signInWithSwitchedAccount()}>Sign in with this account</button>
+          Phantom switched to {compactAddress(accountSwitchAddress)}. Connect this account to continue.
+          <button className="button button-primary" onClick={() => void signInWithSwitchedAccount()}>Connect this account</button>
         </div>
       )}
 

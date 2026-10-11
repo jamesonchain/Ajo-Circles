@@ -43,6 +43,7 @@ export function Providers({
   const walletConfig = useMemo(() => ({ commitment: "confirmed" as const }), []);
 
   const onWalletError = useCallback((error: Error) => {
+    console.warn("[Ajo Circles] wallet request failed", error);
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("ajo-wallet-error", { detail: error }));
     }
@@ -53,7 +54,7 @@ export function Providers({
       endpoint={endpoint}
       config={walletConfig}
     >
-      <WalletProvider wallets={wallets} onError={onWalletError}>
+      <WalletProvider wallets={wallets} autoConnect onError={onWalletError}>
         <WalletModalProvider>
           <QueryClientProvider client={queryClient}>
             <RpcStartupCheck />

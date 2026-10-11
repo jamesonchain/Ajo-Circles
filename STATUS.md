@@ -220,3 +220,11 @@ The regression was introduced by commit 939aef5. The custom connect control sele
 Restored the standard Wallet Standard `WalletMultiButton` in both app locations, kept the existing provider with no autoConnect or legacy adapter instances, and removed the custom connect control and its styles. No browser console or network capture was possible because this session had no controllable browser tab.
 
 App typecheck, ESLint, and production build verification are recorded after the fix. The requested five repeated interactive Phantom cycles remain unverified until a controllable browser tab is available.
+
+## 2026 10 11 standard wallet flow simplification
+
+Removed the custom connection state machine, manual connect call, connection timeout, pending request event guard, duplicate request logic, and signing timeout. WalletProvider now uses an empty wallets array with autoConnect enabled, and the app uses the stock WalletMultiButton. Disconnect uses the adapter disconnect method only.
+
+The account switch layer now only watches the wallet public key, clears wallet data, and its Connect this account action disconnects then opens the standard wallet modal. Providers remain single and stable. Wallet errors are logged and surfaced through the existing short notice.
+
+App typecheck, ESLint, and production build pass. Browser verification of ten connect, disconnect, reconnect, account switch, and signing cycles remains unavailable because this session has no controllable browser tab.

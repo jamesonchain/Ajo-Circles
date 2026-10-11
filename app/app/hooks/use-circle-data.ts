@@ -110,8 +110,6 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
   const [solBalance, setSolBalance] = useState<bigint | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [walletRequestPending, setWalletRequestPending] = useState(false);
-  const walletPopupPending = wallet.connecting || walletRequestPending;
   const rateLimitFailures = useRef(0);
   const hasLoaded = useRef(false);
   const onRpcRetry = useCallback(() => {
@@ -232,7 +230,6 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
   }, [decodeDirectory, wallet.publicKey, walletData]);
 
   const refresh = useCallback(async () => {
-    if (walletPopupPending) return;
     if (!hasLoaded.current) setLoading(true);
     setError("");
     try {
@@ -289,10 +286,10 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
       hasLoaded.current = true;
       setLoading(false);
     }
-  }, [client, decodeDirectory, onRpcRetry, onRpcSuccess, readBalances, refetchDirectory, refetchWallet, wallet.publicKey, walletPopupPending]);
+  }, [client, decodeDirectory, onRpcRetry, onRpcSuccess, readBalances, refetchDirectory, refetchWallet, wallet.publicKey]);
 
   const refreshSelected = useCallback(async () => {
-    if (!selectedCircleAddress || walletPopupPending) return;
+    if (!selectedCircleAddress) return;
     try {
       const address = new PublicKey(selectedCircleAddress);
       const [account, member, selectedScore] = await withRpcRetry(
@@ -338,13 +335,7 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
       console.error("[Ajo Circles] RPC request failed", cause);
       if (!isRateLimited(cause)) setError(`RPC rejected the request: ${rpcReason(cause)}`);
     }
-  }, [client, onRpcRetry, onRpcSuccess, readBalances, selectedCircleAddress, wallet.publicKey, walletPopupPending]);
-
-  useEffect(() => {
-    const onWalletRequest = (event: Event) => setWalletRequestPending(Boolean((event as CustomEvent<boolean>).detail));
-    window.addEventListener("ajo-wallet-request", onWalletRequest);
-    return () => window.removeEventListener("ajo-wallet-request", onWalletRequest);
-  }, []);
+  }, [client, onRpcRetry, onRpcSuccess, readBalances, selectedCircleAddress, wallet.publicKey]);
 
   const markCircleCancelled = useCallback((address: PublicKey) => {
     setCircles((current) =>
@@ -372,7 +363,7 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
     if (!selectedCircleAddress) return;
     const initial = window.setTimeout(() => void refreshSelected(), 0);
     const poll = () => {
-      if (document.visibilityState === "visible" && !walletPopupPending) void refreshSelected();
+      if (document.visibilityState === "visible") void refreshSelected();
     };
     const timer = window.setInterval(poll, 8_000);
     document.addEventListener("visibilitychange", poll);
@@ -381,7 +372,7 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", poll);
     };
-  }, [refreshSelected, selectedCircleAddress, walletPopupPending]);
+  }, [refreshSelected, selectedCircleAddress]);
 
   return {
     client,
