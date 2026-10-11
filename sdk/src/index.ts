@@ -273,6 +273,10 @@ export class AjoCirclesClient {
     return this.program.account.member.fetch(address);
   }
 
+  async fetchMemberForWallet(circle: PublicKey, wallet: PublicKey) {
+    return this.program.account.member.fetchNullable(this.member(circle, wallet));
+  }
+
   async fetchScore(wallet: PublicKey) {
     return this.program.account.ajoScore.fetchNullable(this.score(wallet));
   }

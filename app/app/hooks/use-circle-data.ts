@@ -155,8 +155,12 @@ export function useCircleData(selectedCircleAddress = "") {
     if (!selectedCircleAddress) return;
     try {
       const address = new PublicKey(selectedCircleAddress);
-      const account = await withRpcRetry(
-        () => client.fetchCircle(address),
+      const [account, member, selectedScore] = await withRpcRetry(
+        () => Promise.all([
+          client.fetchCircle(address),
+          wallet.publicKey ? client.fetchMemberForWallet(address, wallet.publicKey) : Promise.resolve(null),
+          wallet.publicKey ? client.fetchScore(wallet.publicKey) : Promise.resolve(null),
+        ]),
         onRpcRetry,
         onRpcSuccess
       );
@@ -166,10 +170,29 @@ export function useCircleData(selectedCircleAddress = "") {
           right.account.createdTs.cmp(left.account.createdTs)
         );
       });
+      if (wallet.publicKey) {
+        setScore(selectedScore);
+        const walletPublicKey = wallet.publicKey;
+        setMemberships((current) => {
+          const withoutCircle = current.filter((row) => !row.circleAddress.equals(address));
+          if (member) {
+            return [{
+              memberAddress: client.member(address, wallet.publicKey!),
+              member,
+              circleAddress: address,
+              circle: account,
+            }, ...withoutCircle];
+          }
+          if (account.creator.equals(walletPublicKey)) {
+            return [{ memberAddress: null, member: null, circleAddress: address, circle: account }, ...withoutCircle];
+          }
+          return withoutCircle;
+        });
+      }
     } catch (cause) {
       if (!isRateLimited(cause)) setError("Circle information is unavailable right now");
     }
-  }, [client, onRpcRetry, onRpcSuccess, selectedCircleAddress]);
+  }, [client, onRpcRetry, onRpcSuccess, selectedCircleAddress, wallet.publicKey]);
 
   const markCircleCancelled = useCallback((address: PublicKey) => {
     setCircles((current) =>

@@ -4,6 +4,7 @@
   "scripts": {
     "devnet:smoke": "node --loader ts-node/esm scripts/devnet-smoke.ts",
     "devnet:fund": "node --loader ts-node/esm scripts/devnet-fund.ts",
+    "devnet:join-status": "node --loader ts-node/esm scripts/join-status.ts",
     "build:sdk": "pnpm --filter ajo_circles_sdk build",
     "test:sdk": "pnpm --filter ajo_circles_sdk test",
     "lint:fix": "prettier \"tests/**/*.ts\" \"migrations/**/*.ts\" \"*.json\" -w",

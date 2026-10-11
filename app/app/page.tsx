@@ -8,6 +8,7 @@ import {
   TOKEN_PROGRAM_ID,
   getAccount,
   getAssociatedTokenAddress,
+  createAssociatedTokenAccountIdempotentInstruction,
   unpackAccount,
 } from "@solana/spl-token";
 import { useConnection } from "@solana/wallet-adapter-react";
@@ -70,6 +71,8 @@ function friendlyError(error: unknown) {
     NameTooLong: "Keep the circle name to 32 characters or fewer.",
     InvalidContribution: "Enter a contribution greater than zero.",
     CircleNotForming: "This circle is no longer accepting members.",
+    CircleFull: "This circle is full. Choose another open circle.",
+    AlreadyMember: "You are already a member of this circle.",
     AlreadyPaid: "You have already paid for this round.",
     DeadlinePassed:
       "The payment window has closed. Ask someone in the circle to cover this payment.",
@@ -105,7 +108,15 @@ function friendlyError(error: unknown) {
     if (message.includes(code)) return text;
   }
   if (/insufficient funds|custom program error: 0x1/i.test(message)) {
-    return "This wallet needs more devnet SOL or test USDC for this action.";
+    return /lamport|sol|fee/i.test(message)
+      ? "This wallet needs more devnet SOL for this action."
+      : "This wallet needs more test USDC for this action.";
+  }
+  if (/already in use|already initialized|account.*exists/i.test(message)) {
+    return "You are already a member of this circle.";
+  }
+  if (/account.*not found|account does not exist|token account/i.test(message)) {
+    return "This wallet needs a test USDC token account before joining.";
   }
   if (/rejected|declined/i.test(message))
     return "The wallet request was cancelled.";
@@ -146,6 +157,36 @@ function frequencyText(periodSecs: anchor.BN) {
 
 function isActive(status: object) {
   return Object.prototype.hasOwnProperty.call(status, "active");
+}
+
+function simulationFailure(value: anchor.web3.SimulatedTransactionResponse) {
+  const logs = value.logs ?? [];
+  const programErrorCode = logs.find((line) => /custom program error|Error Code:/i.test(line)) ?? null;
+  console.error("[Ajo Circles] transaction simulation failed", {
+    message: value.err,
+    logs,
+    programErrorCode,
+  });
+  return new Error(programErrorCode ?? logs.at(-1) ?? "The transaction could not be simulated.");
+}
+
+async function confirmSignature(
+  connection: anchor.web3.Connection,
+  signature: string,
+  blockhash: anchor.web3.BlockhashWithExpiryBlockHeight
+) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const [status, blockHeight] = await Promise.all([
+      connection.getSignatureStatuses([signature]),
+      connection.getBlockHeight("confirmed"),
+    ]);
+    const value = status.value[0];
+    if (value?.err) throw new Error(JSON.stringify(value.err));
+    if (value?.confirmationStatus === "confirmed" || value?.confirmationStatus === "finalized") return;
+    if (blockHeight > blockhash.lastValidBlockHeight) throw new Error("The transaction expired before confirmation.");
+    await new Promise((resolve) => window.setTimeout(resolve, 400));
+  }
+  throw new Error("The transaction was sent but confirmation took too long.");
 }
 
 function circleAddressFromInput(value: string) {
@@ -321,10 +362,7 @@ export default function Home() {
         transaction.feePayer = wallet.publicKey;
         transaction.recentBlockhash = blockhash.blockhash;
         const simulation = await connection.simulateTransaction(transaction);
-        if (simulation.value.err) {
-          const log = simulation.value.logs?.find((line) => /error|failed/i.test(line));
-          throw new Error(log ?? "The transaction could not be simulated.");
-        }
+        if (simulation.value.err) throw simulationFailure(simulation.value);
         let signature: string;
         if (transaction.serialize({ requireAllSignatures: false }).length > 1_232 && wallet.signAllTransactions) {
           const [signed] = await wallet.signAllTransactions([transaction]);
@@ -339,8 +377,7 @@ export default function Home() {
           });
         }
         setNotice(`${label}, waiting for confirmation`);
-        await connection.confirmTransaction({ signature, ...blockhash }, "confirmed");
-        await refresh();
+        await confirmSignature(connection, signature, blockhash);
         await refreshSelected();
         setShareReady(true);
         showNotice(
@@ -353,7 +390,7 @@ export default function Home() {
         setBusy(false);
       }
     },
-    [connection, refresh, refreshSelected, showNotice, wallet]
+    [connection, refreshSelected, showNotice, wallet]
   );
 
   async function createCircle(event: React.FormEvent<HTMLFormElement>) {
@@ -446,8 +483,26 @@ export default function Home() {
       return;
     }
     try {
-      const address = new anchor.web3.PublicKey(circleAddressFromInput(addressText));
-      const circle = await client.fetchCircle(address);
+      let address: anchor.web3.PublicKey;
+      try {
+        address = new anchor.web3.PublicKey(circleAddressFromInput(addressText));
+      } catch {
+        throw new Error("This circle link is invalid.");
+      }
+      let circle: Awaited<ReturnType<typeof client.fetchCircle>>;
+      try {
+        circle = await client.fetchCircle(address);
+      } catch {
+        throw new Error("That circle could not be found on devnet.");
+      }
+      const memberAddress = client.member(address, wallet.publicKey);
+      const existingMember = await client.fetchMemberForWallet(address, wallet.publicKey);
+      if (existingMember) {
+        setSelectedAddress(address.toBase58());
+        setDialog(null);
+        showNotice(`You are already a member on turn ${existingMember.slot + 1}.`);
+        return;
+      }
       const currentConfig = await client.fetchConfig();
       const source = await getAssociatedTokenAddress(
         currentConfig.mint,
@@ -458,9 +513,6 @@ export default function Home() {
         source,
         "confirmed"
       ).catch(() => null);
-      if (!sourceAccount) {
-        throw new Error("This wallet does not have a test USDC account yet.");
-      }
       const slot = requestedSlot ?? Array.from(
         { length: circle.maxMembers },
         (_, index) => index
@@ -475,26 +527,35 @@ export default function Home() {
       const required =
         BigInt(circle.contribution.toString()) *
         BigInt(Math.max(1, circle.maxMembers - 1 - slot));
-      if (sourceAccount.amount < required) {
+      if ((sourceAccount?.amount ?? 0n) < required) {
         throw new Error(
           `This turn needs ${amountText(
             required
-          )} test USDC. This wallet has ${amountText(sourceAccount.amount)}.`
+          )} test USDC. This wallet has ${amountText(sourceAccount?.amount ?? 0n)}.`
         );
       }
+      const createSourceAta = createAssociatedTokenAccountIdempotentInstruction(
+        wallet.publicKey,
+        source,
+        wallet.publicKey,
+        currentConfig.mint
+      );
       const signature = await sendInstruction(
         "Turn chosen",
-        await client.joinCircle(slot, {
-          wallet: wallet.publicKey,
-          config: client.config,
-          circle: address,
-          member: client.member(address, wallet.publicKey),
-          source,
-          depositVault: client.vault("deposit", address),
-          mint: currentConfig.mint,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
+        [
+          createSourceAta,
+          await client.joinCircle(slot, {
+            wallet: wallet.publicKey,
+            config: client.config,
+            circle: address,
+            member: memberAddress,
+            source,
+            depositVault: client.vault("deposit", address),
+            mint: currentConfig.mint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          }),
+        ]
       );
       setSelectedAddress(address.toBase58());
       setCircleAddressInput("");
@@ -1012,7 +1073,7 @@ export default function Home() {
                         <span className="circle-row-icon">{circle.name.slice(0, 1).toUpperCase()}</span>
                         <span className="circle-row-copy">
                           <strong>{circle.name}</strong>
-                          <small>{active ? `Round ${Math.min(circle.currentRound + 1, circle.maxMembers)} of ${circle.maxMembers}` : member ? statusName(circle.status) : "Creator"}</small>
+                          <small>{member ? `You are a member, turn ${member.slot + 1}` : active ? `Round ${Math.min(circle.currentRound + 1, circle.maxMembers)} of ${circle.maxMembers}` : statusName(circle.status)}</small>
                         </span>
                         <span className={`state-pill ${due ? "state-due" : active ? "state-current" : ""}`}>
                           {due ? "Payment due" : active ? "On track" : member ? statusName(circle.status) : "Creator"}
@@ -1203,6 +1264,16 @@ export default function Home() {
               </div>
             </div>
             <div className="primary-action-row">
+              {selectedMember ? (
+                <p className="member-state-line">You are a member, turn {selectedMember.slot + 1}, deposit {amountText(selectedMember.depositRemaining.toString())} USDC.</p>
+              ) : selectedIsCreator ? (
+                <p className="member-state-line">You created this circle. Choose a turn to join it.</p>
+              ) : null}
+              {selectedCircle && !selectedMember && circleStatusName(selectedCircle.account.status) === "forming" && (
+                <button className="button button-outline" onClick={() => { setCircleAddressInput(selectedCircle.address.toBase58()); setDialog("join"); }} disabled={busy}>
+                  Choose a turn and join
+                </button>
+              )}
               {selectedIsCreator && circleStatusName(selectedCircle?.account.status ?? {}) === "forming" && (
                 <button className="button button-outline" onClick={() => setCancelConfirmOpen(true)} disabled={busy}>
                   Cancel circle
@@ -1353,6 +1424,8 @@ export default function Home() {
               )
               .map(({ address, account }) => {
                 const spots = account.maxMembers - account.memberCount;
+                const membership = memberships.find(({ circleAddress }) => circleAddress.equals(address));
+                const creator = Boolean(wallet.publicKey && account.creator.equals(wallet.publicKey));
                 return (
                   <article className="directory-row" key={address.toBase58()}>
                     <div className="directory-name">
@@ -1365,6 +1438,8 @@ export default function Home() {
                           {compactAddress(address.toBase58())} ·{" "}
                           {statusName(account.status)}
                         </p>
+                        {membership?.member && <span className="directory-joined">Joined, turn {membership.member.slot + 1}</span>}
+                        {creator && !membership?.member && <span className="directory-joined">You created this circle</span>}
                       </div>
                     </div>
                     <div className="directory-value">
@@ -1375,7 +1450,11 @@ export default function Home() {
                         {spots} {spots === 1 ? "turn" : "turns"} open
                       </span>
                     </div>
-                    {spots > 0 ? (
+                    {membership?.member ? (
+                      <button className="button button-outline" onClick={() => setSelectedAddress(address.toBase58())}>
+                        View circle
+                      </button>
+                    ) : spots > 0 && circleStatusName(account.status) === "forming" ? (
                       <button
                         className="button button-outline"
                         onClick={() => {
@@ -1536,6 +1615,9 @@ export default function Home() {
                       <span>{selectedCircle.account.memberCount} of {selectedCircle.account.maxMembers} turns chosen</span>
                       <span>{amountText(selectedCircle.account.contribution.toString())} USDC every {frequencyText(selectedCircle.account.periodSecs)}</span>
                     </div>
+                    {selectedMember ? (
+                      <p className="member-state-line">You are a member, turn {selectedMember.slot + 1}, deposit {amountText(selectedMember.depositRemaining.toString())} USDC.</p>
+                    ) : (
                     <label>Choose an open turn
                       <select value={joinSlot ?? ""} onChange={(event) => setJoinSlot(Number(event.target.value))} required>
                         {Array.from({ length: selectedCircle.account.maxMembers }, (_, slot) => slot)
@@ -1546,6 +1628,7 @@ export default function Home() {
                           })}
                       </select>
                     </label>
+                    )}
                     <div className="deposit-note"><ShieldCheck size={17} /><span>The deposit helps cover missed payments. Earlier turns require a larger deposit. Any unused amount can be withdrawn after the circle ends.</span></div>
                   </>
                 )}
@@ -1558,9 +1641,9 @@ export default function Home() {
                 )}
                 <button
                   className="button button-primary form-submit"
-                  disabled={busy || !wallet.publicKey || Boolean(selectedCircle && (selectedCircle.account.memberCount >= selectedCircle.account.maxMembers || selectedCancelled))}
+                  disabled={busy || !wallet.publicKey || Boolean(selectedMember || selectedCancelled || (selectedCircle && selectedCircle.account.memberCount >= selectedCircle.account.maxMembers))}
                 >
-                  {busy ? "Waiting for wallet" : "Choose turn and join"}
+                  {selectedMember ? "You are a member" : busy ? "Waiting for wallet" : "Choose turn and join"}
                 </button>
               </form>
             )}

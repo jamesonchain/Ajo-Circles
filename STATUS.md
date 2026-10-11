@@ -63,3 +63,9 @@ Circle cancellation is implemented in the app and SDK. A creator can cancel only
 Members of a cancelled circle see the refund instruction and Refund my deposit action. The refund uses the existing refund_deposit instruction and returns the member deposit to that member’s test USDC account. Cancelled is now an explicit SDK status mapping and cancelled circles cannot be joined.
 
 App typecheck and ESLint pass. No Anchor program changes were needed.
+
+## 2026 10 11 join reliability
+
+The join path previously treated a missing source associated token account as a fatal client error, so it never reached the program and showed the generic fallback message. Join now derives the Member PDA directly, fetches that Member account before sending, adds an idempotent source ATA instruction followed by join_circle in one transaction, simulates the complete transaction, logs simulation logs and program error codes, and maps known failure reasons to friendly messages. Confirmation uses HTTP status polling because the dedicated RPC does not expose signatureSubscribe.
+
+The devnet reproduction initially exposed a separate faucet failure: the dedicated faucet had 0.00093436 SOL and could not fund the temporary wallets. The deployer topped it up, then scripts/join-status.ts created a temporary circle, joined turns one through three with three wallets, and verified each Member PDA directly. The confirmed join signatures were 5C9phLDFgEugvsdFwUq5AVc48zXBeTzNgz3Ez1DpYs5B9Vd2cwLSzH7Px3nictkGJoRup7dzmYGkVW9ynm3dGLY6, 5SyosreqLjbT1s73A8jjWrtHqhLpKdaVj9CLTMbCo8ZniugHVz9PTn3Y3NQQwhtYZMgLqorp1FbDg2kvwPsVKFS, and 32mvUMEPQhkgi3CU4Co8o1Bq5T35ZNRZJp9Z11kqSVSiUj9djuJbtfEkjjuyZkyXkLAfFSkR9BDvWdt4mwNRjopu. Circle 5au6tvygtVnPAdtFd4awMuinisKBEHYzmSwSkEP6FAF7 passed the direct status check.

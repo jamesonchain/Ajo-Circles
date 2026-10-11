@@ -33,7 +33,12 @@ export function Providers({
       config={{ commitment: "confirmed" }}
     >
       <WalletProvider wallets={wallets} autoConnect onError={onWalletError}>
-        <WalletModalProvider>{children}</WalletModalProvider>
+        <WalletModalProvider>
+          {!process.env.NEXT_PUBLIC_SOLANA_RPC_URL && (
+            <div className="network-error" role="status">Dedicated devnet RPC is not configured. Using the public devnet RPC.</div>
+          )}
+          {children}
+        </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>
   );

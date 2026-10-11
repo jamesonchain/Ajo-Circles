@@ -454,6 +454,17 @@ h3 {
   gap: 10px;
   margin-top: 20px;
 }
+.member-state-line,
+.directory-joined {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+.directory-joined {
+  display: block;
+  color: var(--accent);
+  margin-top: 4px;
+}
 .circle-row:hover,
 .circle-row-selected {
   background: #fffdf756;
