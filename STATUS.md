@@ -43,3 +43,15 @@ The build emits existing Anchor macro configuration, glob re export, and depreca
 ## Next
 
 Set a working dedicated devnet RPC URL, rerun `scripts/demo.ts`, record its confirmed signatures and final balances, then run the browser wallet flows and verify deployment on Vercel.
+
+## 2026 10 11 app fixes
+
+The app typecheck and ESLint pass. Four issues were found and fixed:
+
+1. Circle creation sent three wallet transactions. Create and vault setup now share one simulated transaction with compute budget, one blockhash, confirmed commitment, retry limits, and an oversized transaction fallback using one sign all request.
+
+2. Creators were missing from My circles because only Member accounts were queried. The SDK now queries Circle accounts by creator and merges them with member circles, with immediate refresh after actions.
+
+3. Refresh polling retried too early and kept the busy banner visible. Selected circles now poll every 8 seconds only while visible, use batched account reads, retry rate limits with backoff, clear the banner after success, and show loading skeletons before an empty state.
+
+4. The development overlay reported hydration and effect warnings, and the app still used the removed Next lint command. Time values now start deterministically, browser effects are deferred, wallet errors are forwarded to friendly toasts, and ESLint uses the Next 16 flat configuration.

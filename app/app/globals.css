@@ -352,6 +352,23 @@ h3 {
   color: var(--muted);
   font-size: 13px;
 }
+
+.circle-skeletons {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.circle-skeleton {
+  height: 72px;
+  border-radius: 0.8rem;
+  background: linear-gradient(100deg, var(--green-soft) 30%, var(--panel) 50%, var(--green-soft) 70%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s infinite;
+}
+
+@keyframes skeleton-shimmer {
+  to { background-position: -200% 0; }
+}
 .loader {
   width: 19px;
   height: 19px;

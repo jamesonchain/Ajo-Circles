@@ -8,9 +8,10 @@ import {
   TOKEN_PROGRAM_ID,
   getAccount,
   getAssociatedTokenAddress,
+  unpackAccount,
 } from "@solana/spl-token";
 import { useConnection } from "@solana/wallet-adapter-react";
-import { Transaction } from "@solana/web3.js";
+import { ComputeBudgetProgram, Transaction } from "@solana/web3.js";
 import { motion } from "framer-motion";
 import {
   ArrowDownToLine,
@@ -122,8 +123,9 @@ function walletErrorText(error: unknown) {
   return "Your wallet could not complete that request.";
 }
 
-function deadlineText(deadline: bigint) {
-  const seconds = Number(deadline) - Math.floor(Date.now() / 1000);
+function deadlineText(deadline: bigint, now = 0) {
+  if (!now) return "Calculating";
+  const seconds = Number(deadline) - Math.floor(now / 1000);
   if (seconds <= 0) return "Past due";
   const days = Math.floor(seconds / 86_400);
   const hours = Math.floor((seconds % 86_400) / 3_600);
@@ -168,6 +170,7 @@ export default function Home() {
     loading,
     error,
     refresh,
+    refreshSelected,
     wallet,
   } = useCircleData(selectedAddress);
   const [selectedMembers, setSelectedMembers] = useState<
@@ -186,8 +189,9 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [noticeError, setNoticeError] = useState(false);
+  const [noticeLink, setNoticeLink] = useState("");
   const [shareReady, setShareReady] = useState(false);
-  const [clock, setClock] = useState(() => Date.now());
+  const [clock, setClock] = useState(0);
   const [testMoneyBusy, setTestMoneyBusy] = useState(false);
 
   const selectedCircle = useMemo(
@@ -212,9 +216,17 @@ export default function Home() {
 
   useEffect(() => {
     if (!selectedAddress && memberships.length) {
-      setSelectedAddress(memberships[0].circleAddress.toBase58());
+      const timer = window.setTimeout(
+        () => setSelectedAddress(memberships[0].circleAddress.toBase58()),
+        0
+      );
+      return () => window.clearTimeout(timer);
     } else if (!selectedAddress && circles.length) {
-      setSelectedAddress(circles[0].address.toBase58());
+      const timer = window.setTimeout(
+        () => setSelectedAddress(circles[0].address.toBase58()),
+        0
+      );
+      return () => window.clearTimeout(timer);
     }
   }, [circles, memberships, selectedAddress]);
 
@@ -227,17 +239,18 @@ export default function Home() {
         return;
       }
       try {
-        const [members, vault] = await Promise.all([
+        const vaultAddress = client.vault("pot", selectedCircle.address);
+        const [members, vaultInfo] = await Promise.all([
           client.listMembers(selectedCircle.address),
-          getAccount(
-            connection,
-            client.vault("pot", selectedCircle.address),
-            "confirmed"
-          ).catch(() => null),
+          connection
+            .getMultipleAccountsInfo([vaultAddress], "confirmed")
+            .then(([account]) =>
+              account ? unpackAccount(vaultAddress, account, selectedCircle.account.mint) : null
+            ),
         ]);
         if (cancelled) return;
         setSelectedMembers(members.map(({ account }) => account));
-        setPotAmount(vault?.amount ?? 0n);
+        setPotAmount(vaultInfo?.amount ?? 0n);
       } catch {
         if (!cancelled) {
           setSelectedMembers([]);
@@ -252,14 +265,22 @@ export default function Home() {
   }, [client, connection, selectedCircle]);
 
   useEffect(() => {
+    const initial = window.setTimeout(() => setClock(Date.now()), 0);
     const timer = window.setInterval(() => setClock(Date.now()), 30_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+    };
   }, []);
 
-  const showNotice = useCallback((message: string, isError = false) => {
+  const showNotice = useCallback((message: string, isError = false, link = "") => {
     setNotice(message);
     setNoticeError(isError);
-    window.setTimeout(() => setNotice(""), 5200);
+    setNoticeLink(link);
+    window.setTimeout(() => {
+      setNotice("");
+      setNoticeLink("");
+    }, 5200);
   }, []);
 
   useEffect(() => {
@@ -271,7 +292,10 @@ export default function Home() {
   }, [showNotice]);
 
   const sendInstruction = useCallback(
-    async (label: string, instruction: anchor.web3.TransactionInstruction) => {
+    async (
+      label: string,
+      instruction: anchor.web3.TransactionInstruction | anchor.web3.TransactionInstruction[]
+    ) => {
       if (!wallet.publicKey || !wallet.sendTransaction) {
         throw new Error("Connect a wallet first");
       }
@@ -279,22 +303,50 @@ export default function Home() {
       setShareReady(false);
       setNotice(`${label}, approve the request in your wallet`);
       setNoticeError(false);
+      setNoticeLink("");
       try {
-        const signature = await wallet.sendTransaction(
-          new Transaction().add(instruction),
-          connection
+        const transaction = new Transaction().add(
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+          ...(Array.isArray(instruction) ? instruction : [instruction])
         );
+        const blockhash = await connection.getLatestBlockhash("confirmed");
+        transaction.feePayer = wallet.publicKey;
+        transaction.recentBlockhash = blockhash.blockhash;
+        const simulation = await connection.simulateTransaction(transaction);
+        if (simulation.value.err) {
+          const log = simulation.value.logs?.find((line) => /error|failed/i.test(line));
+          throw new Error(log ?? "The transaction could not be simulated.");
+        }
+        let signature: string;
+        if (transaction.serialize({ requireAllSignatures: false }).length > 1_232 && wallet.signAllTransactions) {
+          const [signed] = await wallet.signAllTransactions([transaction]);
+          signature = await connection.sendRawTransaction(signed.serialize(), {
+            skipPreflight: false,
+            maxRetries: 5,
+          });
+        } else {
+          signature = await wallet.sendTransaction(transaction, connection, {
+            skipPreflight: false,
+            maxRetries: 5,
+          });
+        }
         setNotice(`${label}, waiting for confirmation`);
-        await connection.confirmTransaction(signature, "confirmed");
+        await connection.confirmTransaction({ signature, ...blockhash }, "confirmed");
         await refresh();
+        await refreshSelected();
         setShareReady(true);
-        showNotice(`${label} is confirmed`);
+        showNotice(
+          `${label} is confirmed`,
+          false,
+          `https://explorer.solana.com/tx/${signature}?cluster=devnet`
+        );
         return signature;
       } finally {
         setBusy(false);
       }
     },
-    [connection, refresh, showNotice, wallet]
+    [connection, refresh, refreshSelected, showNotice, wallet]
   );
 
   async function createCircle(event: React.FormEvent<HTMLFormElement>) {
@@ -340,44 +392,42 @@ export default function Home() {
         circle: address,
         systemProgram: anchor.web3.SystemProgram.programId,
       };
-      await sendInstruction(
-        "Circle created",
-        await client.createCircle(
+      const instructions = await Promise.all([
+        client.createCircle(
           circleId,
           circleName.trim(),
           amount,
           periodSeconds,
           membersCount,
           baseAccounts
-        )
-      );
-      await sendInstruction(
-        "Pot opened",
-        await client.initializePotVault({
+        ),
+        client.initializePotVault({
           creator: wallet.publicKey,
           circle: address,
           mint: currentConfig.mint,
           potVault: client.vault("pot", address),
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: anchor.web3.SystemProgram.programId,
-        })
-      );
-      await sendInstruction(
-        "Deposit account opened",
-        await client.initializeDepositVault({
+        }),
+        client.initializeDepositVault({
           creator: wallet.publicKey,
           circle: address,
           mint: currentConfig.mint,
           depositVault: client.vault("deposit", address),
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: anchor.web3.SystemProgram.programId,
-        })
-      );
+        }),
+      ]);
+      const signature = await sendInstruction("Circle created", instructions);
       setSelectedAddress(address.toBase58());
       setCreatedInvite(address.toBase58());
       setCreateStep(4);
       await refresh();
-      showNotice("Circle created. Share the invite so members can choose their turns.");
+      showNotice(
+        "Circle created. Share the invite so members can choose their turns.",
+        false,
+        `https://explorer.solana.com/tx/${signature}?cluster=devnet`
+      );
     } catch (cause) {
       showNotice(friendlyError(cause), true);
     }
@@ -425,7 +475,7 @@ export default function Home() {
           )} test USDC. This wallet has ${amountText(sourceAccount.amount)}.`
         );
       }
-      await sendInstruction(
+      const signature = await sendInstruction(
         "Turn chosen",
         await client.joinCircle(slot, {
           wallet: wallet.publicKey,
@@ -442,7 +492,11 @@ export default function Home() {
       setSelectedAddress(address.toBase58());
       setCircleAddressInput("");
       setDialog(null);
-      showNotice("You joined the circle. Next step is to wait for every turn to be chosen.");
+      showNotice(
+        "You joined the circle. Next step is to wait for every turn to be chosen.",
+        false,
+        `https://explorer.solana.com/tx/${signature}?cluster=devnet`
+      );
     } catch (cause) {
       showNotice(friendlyError(cause), true);
     }
@@ -554,7 +608,7 @@ export default function Home() {
   }
 
   async function withdrawDeposit() {
-    if (!selectedCircle || !wallet.publicKey || !selectedMembership) return;
+    if (!selectedCircle || !wallet.publicKey || !selectedMembership?.member || !selectedMembership.memberAddress) return;
     try {
       const currentConfig = await client.fetchConfig();
       const destination = await getAssociatedTokenAddress(
@@ -579,7 +633,7 @@ export default function Home() {
   }
 
   async function finalizeScore() {
-    if (!selectedCircle || !wallet.publicKey || !selectedMembership) return;
+    if (!selectedCircle || !wallet.publicKey || !selectedMembership?.member || !selectedMembership.memberAddress) return;
     try {
       await sendInstruction(
         "Ajo Score updated",
@@ -641,23 +695,32 @@ export default function Home() {
     const invite = new URLSearchParams(window.location.search).get("circle");
     if (invite) {
       const address = circleAddressFromInput(invite);
-      setCircleAddressInput(address);
-      setSelectedAddress(address);
-      setDialog("join");
+      const timer = window.setTimeout(() => {
+        setCircleAddressInput(address);
+        setSelectedAddress(address);
+        setDialog("join");
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
   }, []);
 
+  const joinCircleAddress = selectedCircle?.address.toBase58();
+  const joinCircleMaxMembers = selectedCircle?.account.maxMembers;
+  const joinCircleSlotsTaken = selectedCircle?.account.slotsTaken;
   useEffect(() => {
-    if (dialog !== "join" || !selectedCircle) {
-      setJoinSlot(null);
-      return;
+    if (dialog !== "join" || !joinCircleAddress) {
+      const timer = window.setTimeout(() => setJoinSlot(null), 0);
+      return () => window.clearTimeout(timer);
     }
     const firstOpenSlot = Array.from(
-      { length: selectedCircle.account.maxMembers },
+      { length: joinCircleMaxMembers ?? 0 },
       (_, slot) => slot
-    ).find((slot) => (selectedCircle.account.slotsTaken & (1 << slot)) === 0);
-    setJoinSlot(firstOpenSlot ?? null);
-  }, [dialog, selectedCircle?.address]);
+    ).find((slot) => ((joinCircleSlotsTaken ?? 0) & (1 << slot)) === 0);
+    const timer = window.setTimeout(() => {
+      setJoinSlot(firstOpenSlot ?? null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [dialog, joinCircleAddress, joinCircleMaxMembers, joinCircleSlotsTaken]);
 
   const nextPayment = memberships
     .map((membership) => ({
@@ -668,6 +731,7 @@ export default function Home() {
     }))
     .filter(
       ({ membership }) =>
+        membership.member &&
         isActive(membership.circle.status) &&
         (membership.member.paidBitmask &
           (1 << membership.circle.currentRound)) ===
@@ -699,7 +763,7 @@ export default function Home() {
   const memberTurn =
     selectedMember?.slot === selectedCircle?.account.currentRound;
   const isRecipient =
-    selectedMembership?.member.slot === selectedCircle?.account.currentRound;
+    selectedMembership?.member?.slot === selectedCircle?.account.currentRound;
   const selectedComplete =
     selectedCircle &&
     Object.prototype.hasOwnProperty.call(
@@ -715,7 +779,7 @@ export default function Home() {
   const currentRoundBit = selectedCircle
     ? 1 << selectedCircle.account.currentRound
     : 0;
-  const currentRoundPaid = selectedMembership
+  const currentRoundPaid = selectedMembership?.member
     ? (selectedMembership.member.paidBitmask & currentRoundBit) !== 0
     : false;
   const missedMember = selectedMembers.find(
@@ -725,13 +789,13 @@ export default function Home() {
     ? null
     : selectedIsActive && roundComplete && isRecipient
     ? { label: "Claim payout", action: claimCurrentPayout, icon: ArrowDownToLine }
-    : selectedIsActive && selectedMembership && !currentRoundPaid
+    : selectedIsActive && selectedMembership?.member && !currentRoundPaid
     ? {
         label: memberTurn ? "Your turn" : "Pay now",
         action: payCurrentRound,
         icon: ArrowUpRight,
       }
-    : selectedIsActive && selectedMembership
+    : selectedIsActive && selectedMembership?.member
     ? { label: "Waiting for others", action: undefined, icon: Clock3 }
     : null;
   const ActionIcon = primaryAction?.icon;
@@ -846,8 +910,10 @@ export default function Home() {
               <WalletMultiButton className="wallet-button" />
             </div>
           ) : loading ? (
-            <div className="loading-state">
-              <span className="loader" /> Reading your circles from devnet
+            <div className="circle-skeletons" aria-label="Loading your circles">
+              {Array.from({ length: 3 }, (_, index) => (
+                <div className="circle-skeleton" key={index} />
+              ))}
             </div>
           ) : memberships.length === 0 ? (
             <div className="empty-state compact-empty">
@@ -869,15 +935,16 @@ export default function Home() {
                 ({ memberAddress, member, circleAddress, circle }) => {
                   const active = isActive(circle.status);
                   const due =
+                    Boolean(member) &&
                     active &&
-                    (member.paidBitmask & (1 << circle.currentRound)) === 0;
+                    ((member?.paidBitmask ?? 0) & (1 << circle.currentRound)) === 0;
                   const selected = selectedAddress === circleAddress.toBase58();
                   return (
                     <button
                       className={`circle-row ${
                         selected ? "circle-row-selected" : ""
                       }`}
-                      key={memberAddress.toBase58()}
+                      key={memberAddress?.toBase58() ?? circleAddress.toBase58()}
                       onClick={() =>
                         setSelectedAddress(circleAddress.toBase58())
                       }
@@ -894,7 +961,9 @@ export default function Home() {
                                 circle.currentRound + 1,
                                 circle.maxMembers
                               )} of ${circle.maxMembers}`
-                            : statusName(circle.status)}
+                            : member
+                            ? statusName(circle.status)
+                            : "Creator"}
                         </small>
                       </span>
                       <span
@@ -906,7 +975,9 @@ export default function Home() {
                           ? "Payment due"
                           : active
                           ? "On track"
-                          : statusName(circle.status)}
+                          : member
+                          ? statusName(circle.status)
+                          : "Creator"}
                       </span>
                       <span className="circle-row-amount">
                         {amountText(circle.contribution.toString())}
@@ -930,7 +1001,7 @@ export default function Home() {
             {nextPayment && (
               <span className="due-note">
                 <Clock3 size={15} /> Next payment{" "}
-                {deadlineText(nextPayment.deadline)}
+                {deadlineText(nextPayment.deadline, clock)}
               </span>
             )}
           </div>
@@ -974,7 +1045,7 @@ export default function Home() {
             </p>
           )}
           {selectedComplete &&
-            selectedMembership &&
+            selectedMembership?.member &&
             !selectedMembership.member.scoreRecorded && (
               <button
                 className="button button-gold score-action"
@@ -1018,7 +1089,7 @@ export default function Home() {
             </button>
           )}
         </div>
-        {selectedComplete && selectedMembership && (
+        {selectedComplete && selectedMembership?.member && (
           <div className="completion-card">
             <div>
               <span className="eyebrow">Circle complete</span>
@@ -1072,7 +1143,8 @@ export default function Home() {
                       ? "Not started"
                       : deadlineText(
                         BigInt(selectedCircle.account.roundStartTs.toString()) +
-                          BigInt(selectedCircle.account.periodSecs.toString())
+                          BigInt(selectedCircle.account.periodSecs.toString()),
+                        clock
                         )
                     : "—"}
                 </strong>
@@ -1080,7 +1152,7 @@ export default function Home() {
               <div>
                 <span>Your deposit</span>
                 <strong>
-                  {selectedMembership
+                  {selectedMembership?.member
                     ? `${amountText(
                         selectedMembership.member.depositRemaining.toString()
                       )} USDC`
@@ -1447,6 +1519,11 @@ export default function Home() {
           role="status"
         >
           {notice}
+          {noticeLink && (
+            <a href={noticeLink} target="_blank" rel="noreferrer">
+              View transaction
+            </a>
+          )}
           {shareReady && <Check size={16} />}
         </div>
       )}

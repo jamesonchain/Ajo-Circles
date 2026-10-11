@@ -26,6 +26,15 @@ export type CircleMembership = {
   circle: Awaited<ReturnType<AjoProgram["account"]["circle"]["fetch"]>>;
 };
 
+export type WalletCircle =
+  | CircleMembership
+  | {
+      memberAddress: null;
+      member: null;
+      circleAddress: PublicKey;
+      circle: Awaited<ReturnType<AjoProgram["account"]["circle"]["fetch"]>>;
+    };
+
 export type PaymentDue = CircleMembership & {
   deadline: bigint;
 };
@@ -268,11 +277,16 @@ export class AjoCirclesClient {
     );
   }
 
-  async listCirclesForWallet(wallet: PublicKey): Promise<CircleMembership[]> {
-    const memberships = await this.program.account.member.all([
-      { memcmp: { offset: 8, bytes: wallet.toBase58() } },
+  async listCirclesForWallet(wallet: PublicKey): Promise<WalletCircle[]> {
+    const [memberships, createdCircles] = await Promise.all([
+      this.program.account.member.all([
+        { memcmp: { offset: 8, bytes: wallet.toBase58() } },
+      ]),
+      this.program.account.circle.all([
+        { memcmp: { offset: 8, bytes: wallet.toBase58() } },
+      ]),
     ]);
-    return Promise.all(
+    const joined = await Promise.all(
       memberships.map(async ({ publicKey, account }) => ({
         memberAddress: publicKey,
         member: account,
@@ -280,12 +294,26 @@ export class AjoCirclesClient {
         circle: await this.fetchCircle(account.circle),
       }))
     );
+    const joinedAddresses = new Set(joined.map(({ circleAddress }) => circleAddress.toBase58()));
+    return [
+      ...joined,
+      ...createdCircles
+        .filter(({ publicKey }) => !joinedAddresses.has(publicKey.toBase58()))
+        .map(({ publicKey, account }) => ({
+          memberAddress: null,
+          member: null,
+          circleAddress: publicKey,
+          circle: account,
+        })),
+    ];
   }
 
   async nextPaymentsDue(wallet: PublicKey): Promise<PaymentDue[]> {
     const memberships = await this.listCirclesForWallet(wallet);
     return memberships
-      .filter(({ circle, member }) => {
+      .filter((membership): membership is CircleMembership => {
+        const { circle, member } = membership;
+        if (!member) return false;
         if (!isActiveStatus(circle.status)) return false;
         const roundBit = 1 << circle.currentRound;
         return (member.paidBitmask & roundBit) === 0;

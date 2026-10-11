@@ -1,14 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as anchor from "@coral-xyz/anchor";
-import { getAccount } from "@solana/spl-token";
+import { unpackAccount } from "@solana/spl-token";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import {
   AjoCirclesClient,
   type AjoCircles,
-  type CircleMembership,
+  type WalletCircle,
 } from "ajo_circles_sdk";
 import { IDL } from "ajo_circles_sdk";
 
@@ -20,10 +20,16 @@ function isRateLimited(error: unknown) {
   );
 }
 
-async function withRpcRetry<T>(task: () => Promise<T>, onRetry: () => void) {
+async function withRpcRetry<T>(
+  task: () => Promise<T>,
+  onRetry: () => void,
+  onSuccess: () => void
+) {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await task();
+      const result = await task();
+      onSuccess();
+      return result;
     } catch (error) {
       if (!isRateLimited(error) || attempt >= retryDelays.length) throw error;
       onRetry();
@@ -49,12 +55,21 @@ export function useCircleData(selectedCircleAddress = "") {
   const { connection } = useConnection();
   const wallet = useWallet();
   const [circles, setCircles] = useState<CircleRow[]>([]);
-  const [memberships, setMemberships] = useState<CircleMembership[]>([]);
+  const [memberships, setMemberships] = useState<WalletCircle[]>([]);
   const [score, setScore] =
     useState<Awaited<ReturnType<AjoCirclesClient["fetchScore"]>>>(null);
   const [tokenBalance, setTokenBalance] = useState<bigint | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const rateLimitFailures = useRef(0);
+  const onRpcRetry = useCallback(() => {
+    rateLimitFailures.current += 1;
+    if (rateLimitFailures.current >= 3) setError("The network is busy, retrying");
+  }, []);
+  const onRpcSuccess = useCallback(() => {
+    rateLimitFailures.current = 0;
+    setError("");
+  }, []);
 
   const provider = useMemo(() => {
     const signedWallet =
@@ -66,10 +81,8 @@ export function useCircleData(selectedCircleAddress = "") {
       preflightCommitment: "confirmed",
     });
   }, [
+    wallet,
     connection,
-    wallet.publicKey,
-    wallet.signTransaction,
-    wallet.signAllTransactions,
   ]);
 
   const client = useMemo(
@@ -86,7 +99,8 @@ export function useCircleData(selectedCircleAddress = "") {
     try {
       const allCircles = await withRpcRetry(
         () => client.program.account.circle.all(),
-        () => setError("The network is busy, retrying")
+        onRpcRetry,
+        onRpcSuccess
       );
       setCircles(
         allCircles
@@ -103,7 +117,8 @@ export function useCircleData(selectedCircleAddress = "") {
               client.fetchScore(wallet.publicKey!),
               client.fetchConfig(),
             ]),
-          () => setError("The network is busy, retrying")
+          onRpcRetry,
+          onRpcSuccess
         );
         setMemberships(walletCircles);
         setScore(walletScore);
@@ -115,15 +130,14 @@ export function useCircleData(selectedCircleAddress = "") {
                 { mint: config.mint },
                 "confirmed"
               ),
-            () => setError("The network is busy, retrying")
+            onRpcRetry,
+            onRpcSuccess
           )
         ).value;
         if (!account) {
           setTokenBalance(0n);
         } else {
-          setTokenBalance(
-            (await getAccount(connection, account.pubkey, "confirmed")).amount
-          );
+          setTokenBalance(unpackAccount(account.pubkey, account.account, config.mint).amount);
         }
       } else {
         setMemberships([]);
@@ -131,15 +145,11 @@ export function useCircleData(selectedCircleAddress = "") {
         setTokenBalance(null);
       }
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Circle information is unavailable right now"
-      );
+      if (!isRateLimited(cause)) setError("Circle information is unavailable right now");
     } finally {
       setLoading(false);
     }
-  }, [client, connection, wallet.publicKey]);
+  }, [client, connection, onRpcRetry, onRpcSuccess, wallet.publicKey]);
 
   const refreshSelected = useCallback(async () => {
     if (!selectedCircleAddress) return;
@@ -147,7 +157,8 @@ export function useCircleData(selectedCircleAddress = "") {
       const address = new PublicKey(selectedCircleAddress);
       const account = await withRpcRetry(
         () => client.fetchCircle(address),
-        () => setError("The network is busy, retrying")
+        onRpcRetry,
+        onRpcSuccess
       );
       setCircles((current) => {
         const next = current.filter((row) => !row.address.equals(address));
@@ -156,19 +167,28 @@ export function useCircleData(selectedCircleAddress = "") {
         );
       });
     } catch (cause) {
-      if (isRateLimited(cause)) setError("The network is busy, retrying");
+      if (!isRateLimited(cause)) setError("Circle information is unavailable right now");
     }
-  }, [client, selectedCircleAddress]);
+  }, [client, onRpcRetry, onRpcSuccess, selectedCircleAddress]);
 
   useEffect(() => {
-    void refresh();
+    const timer = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(timer);
   }, [refresh]);
 
   useEffect(() => {
     if (!selectedCircleAddress) return;
-    void refreshSelected();
-    const timer = window.setInterval(() => void refreshSelected(), 15_000);
-    return () => window.clearInterval(timer);
+    const initial = window.setTimeout(() => void refreshSelected(), 0);
+    const poll = () => {
+      if (document.visibilityState === "visible") void refreshSelected();
+    };
+    const timer = window.setInterval(poll, 8_000);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", poll);
+    };
   }, [refreshSelected, selectedCircleAddress]);
 
   return {
@@ -180,6 +200,7 @@ export function useCircleData(selectedCircleAddress = "") {
     loading,
     error,
     refresh,
+    refreshSelected,
     wallet,
   };
 }
