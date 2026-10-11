@@ -44,6 +44,12 @@ The build emits existing Anchor macro configuration, glob re export, and depreca
 
 Set a working dedicated devnet RPC URL, rerun `scripts/demo.ts`, record its confirmed signatures and final balances, then run the browser wallet flows and verify deployment on Vercel.
 
+## 2026 10 11 balance and Phantom account fixes
+
+The data layer now reads the connected wallet SOL account and associated test USDC account together with `getMultipleAccountsInfo`, refreshes them after confirmed actions, and reports the actual RPC failure reason in the banner and console. The configured RPC runs a startup `getVersion` check. Test money updates balances immediately from the route response and explains the rate limit wait.
+
+Phantom account changes are observed through the provider and wallet adapter events. A switch clears wallet specific data, blocks signing, shows the new shortened address, and requires signing in again before reloading. The header shows Phantom and the active address while connected and includes Disconnect. App typecheck and ESLint pass after these changes. No new devnet Phantom transaction was signed during this fix.
+
 ## 2026 10 11 app fixes
 
 The app typecheck and ESLint pass. Four issues were found and fixed:

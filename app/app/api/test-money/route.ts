@@ -6,7 +6,6 @@ import {
 import {
   Connection,
   Keypair,
-  LAMPORTS_PER_SOL,
   PublicKey,
   SystemProgram,
   Transaction,
@@ -37,7 +36,8 @@ export async function POST(request: Request) {
     const limitMs = Number(process.env.TEST_MONEY_RATE_LIMIT_MS ?? 3_600_000);
     const previous = requests.get(wallets[0].toBase58()) ?? 0;
     if (!body.demo && now - previous < limitMs) {
-      return Response.json({ error: "Test funds were already requested recently." }, { status: 429 });
+      const retryAfterSeconds = Math.ceil((limitMs - (now - previous)) / 1000);
+      return Response.json({ error: `Test money was already sent. Try again in ${Math.ceil(retryAfterSeconds / 60)} minutes.`, retryAfterSeconds }, { status: 429 });
     }
 
     const rpc = process.env.SOLANA_RPC_URL ?? process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
@@ -75,7 +75,7 @@ export async function POST(request: Request) {
     }
     const signatures = await Promise.all(wallets.map(fund));
     requests.set(wallets[0].toBase58(), now);
-    return Response.json({ signature: signatures[0], signatures, usdc: usdc.toString() });
+    return Response.json({ signature: signatures[0], signatures, usdc: usdc.toString(), sol });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     const friendly = /insufficient funds|insufficient lamports/i.test(message)

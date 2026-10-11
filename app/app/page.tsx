@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as anchor from "@coral-xyz/anchor";
 import dynamic from "next/dynamic";
 import {
@@ -219,6 +219,8 @@ export default function Home() {
     error,
     refresh,
     refreshSelected,
+    clearWalletData,
+    optimisticBalances,
     markCircleCancelled,
     wallet,
   } = useCircleData(selectedAddress, demo.activeWallet ?? undefined);
@@ -247,6 +249,9 @@ export default function Home() {
   const [creatorSlot, setCreatorSlot] = useState(0);
   const [startMode, setStartMode] = useState<"full" | "demo">("full");
   const [weekday, setWeekday] = useState("Wednesday");
+  const [accountSwitchAddress, setAccountSwitchAddress] = useState("");
+  const previousWalletAddress = useRef<string | null>(null);
+  const accountSwitchPending = Boolean(accountSwitchAddress);
 
   const selectedCircle = useMemo(
     () => circles.find(({ address }) => address.toBase58() === selectedAddress),
@@ -349,6 +354,71 @@ export default function Home() {
     return () => window.removeEventListener("ajo-wallet-error", onWalletError);
   }, [showNotice]);
 
+  const handleAccountSwitch = useCallback((address: string) => {
+    setAccountSwitchAddress(address);
+    setSelectedAddress("");
+    clearWalletData();
+  }, [clearWalletData]);
+
+  useEffect(() => {
+    if (demo.mode !== "phantom") {
+      previousWalletAddress.current = null;
+      return;
+    }
+    const address = wallet.publicKey?.toBase58() ?? null;
+    if (previousWalletAddress.current && address && previousWalletAddress.current !== address) {
+      handleAccountSwitch(address);
+    }
+    previousWalletAddress.current = address;
+  }, [demo.mode, handleAccountSwitch, wallet.publicKey]);
+
+  useEffect(() => {
+    if (demo.mode !== "phantom") return;
+    type AccountEventProvider = {
+      on?: (event: string, handler: (value: unknown) => void) => void;
+      removeListener?: (event: string, handler: (value: unknown) => void) => void;
+      off?: (event: string, handler: (value: unknown) => void) => void;
+    };
+    const provider = (window as Window & { solana?: AccountEventProvider }).solana;
+    const adapter = wallet.wallet?.adapter as unknown as AccountEventProvider | undefined;
+    const eventProviders = [provider, adapter].filter(
+      (value, index, all): value is AccountEventProvider => Boolean(value?.on) && all.indexOf(value) === index
+    );
+    if (!eventProviders.length) return;
+    const onAccountChanged = (value: unknown) => {
+      const account = value && typeof value === "object" && "accounts" in value
+        ? (value as { accounts?: Array<{ address?: string }> }).accounts?.[0]?.address
+        : undefined;
+      const next = value instanceof anchor.web3.PublicKey
+        ? value.toBase58()
+        : typeof value === "string" ? value : account ?? "";
+      if (next) handleAccountSwitch(next);
+    };
+    eventProviders.forEach((eventProvider) => {
+      eventProvider.on?.("accountChanged", onAccountChanged);
+      eventProvider.on?.("change", onAccountChanged);
+    });
+    return () => {
+      eventProviders.forEach((eventProvider) => {
+        eventProvider.removeListener?.("accountChanged", onAccountChanged);
+        eventProvider.off?.("accountChanged", onAccountChanged);
+        eventProvider.removeListener?.("change", onAccountChanged);
+        eventProvider.off?.("change", onAccountChanged);
+      });
+    };
+  }, [demo.mode, handleAccountSwitch, wallet.wallet]);
+
+  async function signInWithSwitchedAccount() {
+    try {
+      await wallet.disconnect();
+      await wallet.connect();
+      setAccountSwitchAddress("");
+      await refresh();
+    } catch (cause) {
+      showNotice(walletErrorText(cause), true);
+    }
+  }
+
   const sendInstruction = useCallback(
     async (
       label: string,
@@ -356,6 +426,9 @@ export default function Home() {
     ) => {
       if (!wallet.publicKey || !wallet.sendTransaction) {
         throw new Error("Connect a wallet first");
+      }
+      if (accountSwitchPending) {
+        throw new Error("Sign in with the switched Phantom account before continuing.");
       }
       setBusy(true);
       setShareReady(false);
@@ -400,7 +473,7 @@ export default function Home() {
         setBusy(false);
       }
     },
-    [connection, refreshSelected, showNotice, wallet]
+    [accountSwitchPending, connection, refreshSelected, showNotice, wallet]
   );
 
   async function createCircle(event: React.FormEvent<HTMLFormElement>) {
@@ -797,7 +870,7 @@ export default function Home() {
   }
 
   async function requestTestMoney() {
-    if (!wallet.publicKey) {
+    if (!wallet.publicKey || accountSwitchPending) {
       showNotice("Connect your wallet to request test money.", true);
       return;
     }
@@ -812,9 +885,10 @@ export default function Home() {
             : { wallet: wallet.publicKey.toBase58() }
         ),
       });
-      const result = (await response.json()) as { error?: string };
+      const result = (await response.json()) as { error?: string; usdc?: string; sol?: number; retryAfterSeconds?: number };
       if (!response.ok) throw new Error(result.error ?? "Test money could not be sent.");
-      await refresh();
+      optimisticBalances(BigInt(result.usdc ?? "0"), BigInt(result.sol ?? 0));
+      void refresh();
       showNotice(demo.mode === "demo" ? "Demo wallets funded with test USDC and devnet SOL." : "Test USDC and devnet SOL sent to your wallet.");
     } catch (cause) {
       showNotice(cause instanceof Error ? cause.message : "Test money could not be sent.", true);
@@ -971,7 +1045,11 @@ export default function Home() {
             <button className={demo.mode === "demo" ? "wallet-mode-active" : ""} onClick={() => demo.setMode("demo")}>Demo wallets</button>
           </div>
           {demo.mode === "phantom" ? (
-            <WalletMultiButton className="wallet-button" />
+            <>
+              <WalletMultiButton className="wallet-button" />
+              {wallet.publicKey && <span className="wallet-active-account">Phantom {compactAddress(wallet.publicKey.toBase58())}</span>}
+              {wallet.publicKey && <button className="wallet-disconnect" onClick={() => void wallet.disconnect()}>Disconnect</button>}
+            </>
           ) : (
             <div className="demo-wallet-picker">
               <select value={demo.activeIndex} onChange={(event) => demo.setActiveIndex(Number(event.target.value))} aria-label="Active demo wallet">
@@ -985,6 +1063,13 @@ export default function Home() {
         </nav>
       </header>
 
+      {accountSwitchPending && (
+        <div className="account-switch-banner" role="status">
+          Phantom switched to {compactAddress(accountSwitchAddress)}. Sign in with this account to continue.
+          <button className="button button-primary" onClick={() => void signInWithSwitchedAccount()}>Sign in with this account</button>
+        </div>
+      )}
+
       <section className="app-heading" id="top">
         <div>
           <span className="eyebrow">Solana devnet</span>
@@ -995,7 +1080,7 @@ export default function Home() {
           <button
             className="button button-quiet"
             onClick={() => void refresh()}
-            disabled={loading}
+            disabled={loading || accountSwitchPending}
             title="Refresh chain data"
           >
             <RefreshCw size={17} className={loading ? "spin" : ""} />
@@ -1004,10 +1089,11 @@ export default function Home() {
           <button
             className="button button-primary"
             onClick={() => setDialog("create")}
+            disabled={accountSwitchPending}
           >
             <Plus size={18} /> Create circle
           </button>
-          <button className="button button-outline" onClick={() => void requestTestMoney()} disabled={testMoneyBusy || !wallet.publicKey}>
+          <button className="button button-outline" onClick={() => void requestTestMoney()} disabled={testMoneyBusy || !wallet.publicKey || accountSwitchPending}>
             <Wallet size={17} /> {testMoneyBusy ? "Funding wallets" : demo.mode === "demo" ? "Fund demo wallets" : "Get test money"}
           </button>
         </div>
@@ -1030,13 +1116,13 @@ export default function Home() {
           <div className="stat">
             <strong>
               {tokenBalance === null
-                ? "Connect"
+                ? wallet.publicKey ? "0.00 USDC" : "Connect"
                 : `${amountText(tokenBalance)} USDC`}
             </strong>
             <span>your test balance</span>
           </div>
           <div className="stat">
-            <strong>{solBalance === null ? "Connect" : `${solText(solBalance)} SOL`}</strong>
+            <strong>{solBalance === null ? wallet.publicKey ? "0.000 SOL" : "Connect" : `${solText(solBalance)} SOL`}</strong>
             <span>devnet balance</span>
           </div>
         </div>

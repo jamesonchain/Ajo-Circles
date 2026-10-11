@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as anchor from "@coral-xyz/anchor";
-import { unpackAccount } from "@solana/spl-token";
+import { getAssociatedTokenAddress, unpackAccount } from "@solana/spl-token";
 import { useConnection, useWallet, type WalletContextState } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import {
@@ -18,6 +18,11 @@ function isRateLimited(error: unknown) {
   return /429|rate.?limit|too many requests/i.test(
     error instanceof Error ? error.message : String(error)
   );
+}
+
+function rpcReason(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/^Error:\s*/i, "").split("\n")[0].slice(0, 180);
 }
 
 async function withRpcRetry<T>(
@@ -74,6 +79,34 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
     setError("");
   }, []);
 
+  const readBalances = useCallback(async (owner: PublicKey, mint: PublicKey) => {
+    const associatedToken = await getAssociatedTokenAddress(mint, owner);
+    const [ownerAccount, tokenAccount] = await connection.getMultipleAccountsInfo(
+      [owner, associatedToken],
+      "confirmed"
+    );
+    return {
+      sol: BigInt(ownerAccount?.lamports ?? 0),
+      usdc: tokenAccount
+        ? unpackAccount(associatedToken, tokenAccount, mint).amount
+        : 0n,
+    };
+  }, [connection]);
+
+  const clearWalletData = useCallback(() => {
+    hasLoaded.current = false;
+    setMemberships([]);
+    setScore(null);
+    setTokenBalance(null);
+    setSolBalance(null);
+    setLoading(true);
+  }, []);
+
+  const optimisticBalances = useCallback((usdc: bigint, sol: bigint) => {
+    setTokenBalance((current) => (current ?? 0n) + usdc);
+    setSolBalance((current) => (current ?? 0n) + sol);
+  }, []);
+
   const provider = useMemo(() => {
     const signedWallet =
       wallet.publicKey && wallet.signTransaction
@@ -125,24 +158,13 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
         );
         setMemberships(walletCircles);
         setScore(walletScore);
-        setSolBalance(BigInt(await connection.getBalance(wallet.publicKey, "confirmed")));
-        const [account] = (
-          await withRpcRetry(
-            () =>
-              connection.getTokenAccountsByOwner(
-                wallet.publicKey!,
-                { mint: config.mint },
-                "confirmed"
-              ),
-            onRpcRetry,
-            onRpcSuccess
-          )
-        ).value;
-        if (!account) {
-          setTokenBalance(0n);
-        } else {
-          setTokenBalance(unpackAccount(account.pubkey, account.account, config.mint).amount);
-        }
+        const balances = await withRpcRetry(
+          () => readBalances(wallet.publicKey!, config.mint),
+          onRpcRetry,
+          onRpcSuccess
+        );
+        setSolBalance(balances.sol);
+        setTokenBalance(balances.usdc);
       } else {
         setMemberships([]);
         setScore(null);
@@ -150,12 +172,13 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
         setSolBalance(null);
       }
     } catch (cause) {
-      if (!isRateLimited(cause)) setError("Circle information is unavailable right now");
+      console.error("[Ajo Circles] RPC request failed", cause);
+      if (!isRateLimited(cause)) setError(`RPC rejected the request: ${rpcReason(cause)}`);
     } finally {
       hasLoaded.current = true;
       setLoading(false);
     }
-  }, [client, connection, onRpcRetry, onRpcSuccess, wallet.publicKey]);
+  }, [client, onRpcRetry, onRpcSuccess, readBalances, wallet.publicKey]);
 
   const refreshSelected = useCallback(async () => {
     if (!selectedCircleAddress) return;
@@ -178,7 +201,13 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
       });
       if (wallet.publicKey) {
         setScore(selectedScore);
-        setSolBalance(BigInt(await connection.getBalance(wallet.publicKey, "confirmed")));
+        const balances = await withRpcRetry(
+          () => readBalances(wallet.publicKey!, account.mint),
+          onRpcRetry,
+          onRpcSuccess
+        );
+        setSolBalance(balances.sol);
+        setTokenBalance(balances.usdc);
         const walletPublicKey = wallet.publicKey;
         setMemberships((current) => {
           const withoutCircle = current.filter((row) => !row.circleAddress.equals(address));
@@ -197,9 +226,10 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
         });
       }
     } catch (cause) {
-      if (!isRateLimited(cause)) setError("Circle information is unavailable right now");
+      console.error("[Ajo Circles] RPC request failed", cause);
+      if (!isRateLimited(cause)) setError(`RPC rejected the request: ${rpcReason(cause)}`);
     }
-  }, [client, connection, onRpcRetry, onRpcSuccess, selectedCircleAddress, wallet.publicKey]);
+  }, [client, onRpcRetry, onRpcSuccess, readBalances, selectedCircleAddress, wallet.publicKey]);
 
   const markCircleCancelled = useCallback((address: PublicKey) => {
     setCircles((current) =>
@@ -249,6 +279,8 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
     error,
     refresh,
     refreshSelected,
+    clearWalletData,
+    optimisticBalances,
     markCircleCancelled,
     wallet,
   };
