@@ -110,29 +110,6 @@ a {
 .wallet-adapter-button:hover {
   background: #174d3a !important;
 }
-.wallet-connect-control,
-.wallet-connect-pending,
-.wallet-connect-error {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.wallet-connect-control small,
-.wallet-connect-error span {
-  color: var(--terracotta);
-  font-size: 11px;
-}
-.wallet-connect-control small {
-  max-width: 190px;
-}
-.wallet-cancel {
-  border: 0;
-  background: transparent;
-  color: var(--terracotta);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-}
 .app-heading {
   max-width: 1320px;
   margin: auto;

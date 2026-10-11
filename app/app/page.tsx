@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import * as anchor from "@coral-xyz/anchor";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -31,12 +32,15 @@ import {
 } from "lucide-react";
 import { AjoCirclesClient, calculateDeposit, circleStatusName, decodeCircle, decodeMember, type CircleMembership } from "ajo_circles_sdk";
 import { CircleRing } from "./components/circle-ring";
-import { WalletConnectControl } from "./components/wallet-connect-control";
 import { useCircleData } from "./hooks/use-circle-data";
 import { useDemoWallet } from "./hooks/use-demo-wallet";
 import { readTokenBalance, tokenAccountForMint } from "./lib/token-balance";
 
 const explorerBase = "https://explorer.solana.com/address";
+const WalletMultiButton = dynamic(
+  () => import("@solana/wallet-adapter-react-ui").then((module) => module.WalletMultiButton),
+  { ssr: false, loading: () => <button className="wallet-button">Connect</button> },
+);
 const decimals = 6;
 const HIDDEN_CIRCLE_ADDRESSES = [
   "Ahy8nFmofWTSN3Pxcsa7jRMbm7rMddtRjQXYJrh2tSDd",
@@ -1211,7 +1215,7 @@ export default function Home() {
           </div>
           {demo.mode === "phantom" ? (
             <>
-              <WalletConnectControl />
+              <WalletMultiButton className="wallet-button" />
               {wallet.publicKey && <span className="wallet-active-account">Phantom {compactAddress(wallet.publicKey.toBase58())}</span>}
               {wallet.publicKey && <button className="wallet-disconnect" onClick={() => void wallet.disconnect()}>Disconnect</button>}
             </>
@@ -1334,7 +1338,7 @@ export default function Home() {
               <p>
                 Your turns, payments, deposits, and Ajo Score will appear here.
               </p>
-              <WalletConnectControl />
+              <WalletMultiButton className="wallet-button" />
             </div>
           ) : loading ? (
             <div className="circle-skeletons" aria-label="Loading your circles">

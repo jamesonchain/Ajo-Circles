@@ -212,3 +212,11 @@ Invite join check passed for 6JvWtZWMtfhz7hQzXxa6zYpPBzFdqE2PYWsP9vR9B2L2
 ```
 
 App typecheck and ESLint pass. An interactive browser tab was unavailable, so visual invite link verification remains pending.
+
+## 2026 10 11 wallet connect regression fix
+
+The regression was introduced by commit 939aef5. The custom connect control selected Phantom and opened the wallet modal, then returned without calling `wallet.connect()`, so the request never started. The last working version used `WalletMultiButton`.
+
+Restored the standard Wallet Standard `WalletMultiButton` in both app locations, kept the existing provider with no autoConnect or legacy adapter instances, and removed the custom connect control and its styles. No browser console or network capture was possible because this session had no controllable browser tab.
+
+App typecheck, ESLint, and production build verification are recorded after the fix. The requested five repeated interactive Phantom cycles remain unverified until a controllable browser tab is available.
