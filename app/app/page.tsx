@@ -48,15 +48,25 @@ const WalletMultiButton = dynamic(
 const explorerBase = "https://explorer.solana.com/address";
 const decimals = 6;
 
-function amountText(amount: bigint | number | string) {
+function numericValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return 0;
+  const parsed = typeof value === "bigint" ? Number(value) : Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function safeCount(value: unknown) {
+  return Math.max(0, Math.floor(numericValue(value)));
+}
+
+function amountText(amount: unknown) {
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(Number(amount) / 10 ** decimals);
+  }).format(numericValue(amount) / 10 ** decimals);
 }
 
-function solText(amount: bigint | number | string) {
-  return new Intl.NumberFormat("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(Number(amount) / 1_000_000_000);
+function solText(amount: unknown) {
+  return new Intl.NumberFormat("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(numericValue(amount) / 1_000_000_000);
 }
 
 function compactAddress(address: string) {
@@ -151,8 +161,8 @@ function deadlineText(deadline: bigint, now = 0) {
   return `${Math.max(1, minutes)}m`;
 }
 
-function frequencyText(periodSecs: anchor.BN) {
-  const seconds = periodSecs.toNumber();
+function frequencyText(periodSecs: unknown) {
+  const seconds = numericValue(periodSecs);
   if (seconds === 86_400) return "day";
   if (seconds === 1_209_600) return "two weeks";
   if (seconds === 2_592_000) return "month";
@@ -275,7 +285,7 @@ export default function Home() {
     isActive(account.status)
   ).length;
   const totalMembers = circles.reduce(
-    (sum, row) => sum + row.account.memberCount,
+    (sum, row) => sum + numericValue(row.account?.memberCount),
     0
   );
 
@@ -618,19 +628,19 @@ export default function Home() {
         "confirmed"
       ).catch(() => null);
       const slot = requestedSlot ?? Array.from(
-        { length: circle.maxMembers },
+        { length: safeCount(circle.maxMembers) },
         (_, index) => index
       ).find((index) => (circle.slotsTaken & (1 << index)) === 0) ?? -1;
       if (slot < 0) throw new Error("There are no turns left in this circle.");
-      if (slot >= circle.maxMembers) {
+      if (slot >= safeCount(circle.maxMembers)) {
         throw new Error("That turn is outside this circle.");
       }
       if ((circle.slotsTaken & (1 << slot)) !== 0) {
         throw new Error("That turn has already been chosen.");
       }
       const required =
-        BigInt(circle.contribution.toString()) *
-        BigInt(Math.max(1, circle.maxMembers - 1 - slot));
+        BigInt(circle.contribution?.toString() ?? "0") *
+        BigInt(Math.max(1, safeCount(circle.maxMembers) - 1 - slot));
       if ((sourceAccount?.amount ?? 0n) < required) {
         throw new Error(
           `This turn needs ${amountText(
@@ -685,7 +695,7 @@ export default function Home() {
       const account = await getAccount(connection, source, "confirmed").catch(
         () => null
       );
-      const needed = BigInt(selectedCircle.account.contribution.toString());
+      const needed = BigInt(selectedCircle.account.contribution?.toString() ?? "0");
       if (!account || account.amount < needed) {
         throw new Error(
           `This payment needs ${amountText(
@@ -947,8 +957,8 @@ export default function Home() {
     .map((membership) => ({
       membership,
       deadline:
-        BigInt(membership.circle.roundStartTs.toString()) +
-        BigInt(membership.circle.periodSecs.toString()),
+        BigInt(membership.circle.roundStartTs?.toString() ?? "0") +
+        BigInt(membership.circle.periodSecs?.toString() ?? "0"),
     }))
     .filter(
       ({ membership }) =>
@@ -969,9 +979,9 @@ export default function Home() {
   const ringMembers = selectedMembers.map((member) => ({
     wallet: member.wallet.toBase58(),
     slot: member.slot,
-    paid:
-      (member.paidBitmask &
-        (1 << (selectedCircle?.account.currentRound ?? 0))) !==
+      paid:
+        (member.paidBitmask &
+        (1 << safeCount(selectedCircle?.account.currentRound ?? 0))) !==
       0,
     missed: member.defaults > 0,
   }));
@@ -992,13 +1002,13 @@ export default function Home() {
       "completed"
     );
   const roundDeadline = selectedCircle
-    ? BigInt(selectedCircle.account.roundStartTs.toString()) +
-      BigInt(selectedCircle.account.periodSecs.toString())
+    ? BigInt(selectedCircle.account.roundStartTs?.toString() ?? "0") +
+      BigInt(selectedCircle.account.periodSecs?.toString() ?? "0")
     : 0n;
   const deadlinePassed =
     selectedCircle !== undefined && BigInt(Math.floor(clock / 1000)) >= roundDeadline;
   const currentRoundBit = selectedCircle
-    ? 1 << selectedCircle.account.currentRound
+    ? 1 << safeCount(selectedCircle.account.currentRound)
     : 0;
   const currentRoundPaid = selectedMembership?.member
     ? (selectedMembership.member.paidBitmask & currentRoundBit) !== 0
@@ -1021,7 +1031,7 @@ export default function Home() {
     : null;
   const ActionIcon = primaryAction?.icon;
   const timelineRounds = selectedCircle
-    ? Array.from({ length: selectedCircle.account.maxMembers }, (_, round) => {
+    ? Array.from({ length: safeCount(selectedCircle.account.maxMembers) }, (_, round) => {
         const recipient = selectedMembers.find((member) => member.slot === round);
         return { round, recipient };
       })
@@ -1213,12 +1223,12 @@ export default function Home() {
                         <span className="circle-row-icon">{circle.name.slice(0, 1).toUpperCase()}</span>
                         <span className="circle-row-copy">
                           <strong>{circle.name}</strong>
-                          <small>{member ? `You are a member, turn ${member.slot + 1}` : active ? `Round ${Math.min(circle.currentRound + 1, circle.maxMembers)} of ${circle.maxMembers}` : statusName(circle.status)}</small>
+                          <small>{member ? `You are a member, turn ${safeCount(member.slot) + 1}` : active ? `Round ${Math.min(safeCount(circle.currentRound) + 1, safeCount(circle.maxMembers))} of ${safeCount(circle.maxMembers)}` : statusName(circle.status)}</small>
                         </span>
                         <span className={`state-pill ${due ? "state-due" : active ? "state-current" : ""}`}>
                           {due ? "Payment due" : active ? "On track" : member ? statusName(circle.status) : "Creator"}
                         </span>
-                        <span className="circle-row-amount">{amountText(circle.contribution.toString())}<small>USDC</small></span>
+                        <span className="circle-row-amount">{amountText(circle.contribution)}<small>USDC</small></span>
                         <ArrowUpRight size={17} className="row-arrow" />
                       </button>
                       {cancelled && <span className="cancelled-badge">Cancelled</span>}
@@ -1270,11 +1280,11 @@ export default function Home() {
               </div>
               <div className="score-facts">
                 <span>
-                  {score.roundsPaidOnTime.toString()}
+                  {numericValue(score.roundsPaidOnTime)}
                   <small>payments on time</small>
                 </span>
                 <span>
-                  {score.roundsDefaulted.toString()}
+                  {numericValue(score.roundsDefaulted)}
                   <small>defaults</small>
                 </span>
               </div>
@@ -1364,7 +1374,7 @@ export default function Home() {
                 <strong>
                   {selectedCircle
                     ? `${amountText(
-                        selectedCircle.account.contribution.toString()
+                        selectedCircle.account.contribution
                       )} USDC`
                     : "—"}
                 </strong>
@@ -1373,7 +1383,7 @@ export default function Home() {
                 <span>Members</span>
                 <strong>
                   {selectedCircle
-                    ? `${selectedCircle.account.memberCount} / ${selectedCircle.account.maxMembers}`
+                    ? `${safeCount(selectedCircle.account.memberCount)} / ${safeCount(selectedCircle.account.maxMembers)}`
                     : "—"}
                 </strong>
               </div>
@@ -1381,12 +1391,12 @@ export default function Home() {
                 <span>Payment window</span>
                 <strong>
                   {selectedCircle
-                    ? selectedCancelled || selectedCircle.account.memberCount <
-                      selectedCircle.account.maxMembers
+                    ? selectedCancelled || safeCount(selectedCircle.account.memberCount) <
+                      safeCount(selectedCircle.account.maxMembers)
                       ? "Not started"
                       : deadlineText(
-                        BigInt(selectedCircle.account.roundStartTs.toString()) +
-                          BigInt(selectedCircle.account.periodSecs.toString()),
+                        BigInt(selectedCircle.account.roundStartTs?.toString() ?? "0") +
+                          BigInt(selectedCircle.account.periodSecs?.toString() ?? "0"),
                         clock
                         )
                     : "—"}
@@ -1397,7 +1407,7 @@ export default function Home() {
                 <strong>
                   {selectedMembership?.member
                     ? `${amountText(
-                        selectedMembership.member.depositRemaining.toString()
+                        selectedMembership.member.depositRemaining
                       )} USDC`
                     : "Not joined"}
                 </strong>
@@ -1405,7 +1415,7 @@ export default function Home() {
             </div>
             <div className="primary-action-row">
               {selectedMember ? (
-                <p className="member-state-line">You are a member, turn {selectedMember.slot + 1}, deposit {amountText(selectedMember.depositRemaining.toString())} USDC.</p>
+                <p className="member-state-line">You are a member, turn {selectedMember.slot + 1}, deposit {amountText(selectedMember.depositRemaining)} USDC.</p>
               ) : selectedIsCreator ? (
                 <p className="member-state-line">You created this circle. Choose a turn to join it.</p>
               ) : null}
@@ -1563,7 +1573,7 @@ export default function Home() {
                   )
               )
               .map(({ address, account }) => {
-                const spots = account.maxMembers - account.memberCount;
+                const spots = safeCount(account.maxMembers) - safeCount(account.memberCount);
                 const membership = memberships.find(({ circleAddress }) => circleAddress.equals(address));
                 const creator = Boolean(wallet.publicKey && account.creator.equals(wallet.publicKey));
                 return (
@@ -1584,7 +1594,7 @@ export default function Home() {
                     </div>
                     <div className="directory-value">
                       <strong>
-                        {amountText(account.contribution.toString())} USDC
+                        {amountText(account.contribution)} USDC
                       </strong>
                       <span>
                         {spots} {spots === 1 ? "turn" : "turns"} open
@@ -1770,18 +1780,18 @@ export default function Home() {
                   <>
                     <div className="join-preview">
                       <strong>{selectedCircle.account.name}</strong>
-                      <span>{selectedCircle.account.memberCount} of {selectedCircle.account.maxMembers} turns chosen</span>
-                      <span>{amountText(selectedCircle.account.contribution.toString())} USDC every {frequencyText(selectedCircle.account.periodSecs)}</span>
+                      <span>{safeCount(selectedCircle.account.memberCount)} of {safeCount(selectedCircle.account.maxMembers)} turns chosen</span>
+                      <span>{amountText(selectedCircle.account.contribution)} USDC every {frequencyText(selectedCircle.account.periodSecs)}</span>
                     </div>
                     {selectedMember ? (
-                      <p className="member-state-line">You are a member, turn {selectedMember.slot + 1}, deposit {amountText(selectedMember.depositRemaining.toString())} USDC.</p>
+                      <p className="member-state-line">You are a member, turn {selectedMember.slot + 1}, deposit {amountText(selectedMember.depositRemaining)} USDC.</p>
                     ) : (
                     <label>Choose an open turn
                       <select value={joinSlot ?? ""} onChange={(event) => setJoinSlot(Number(event.target.value))} required>
-                        {Array.from({ length: selectedCircle.account.maxMembers }, (_, slot) => slot)
+                        {Array.from({ length: safeCount(selectedCircle.account.maxMembers) }, (_, slot) => slot)
                           .filter((slot) => (selectedCircle.account.slotsTaken & (1 << slot)) === 0)
                           .map((slot) => {
-                            const deposit = calculateDeposit(BigInt(selectedCircle.account.contribution.toString()), selectedCircle.account.maxMembers, slot);
+                            const deposit = calculateDeposit(BigInt(selectedCircle.account.contribution?.toString() ?? "0"), safeCount(selectedCircle.account.maxMembers), slot);
                             return <option key={slot} value={slot}>Turn {slot + 1}, deposit {amountText(deposit)} USDC</option>;
                           })}
                       </select>
@@ -1799,7 +1809,7 @@ export default function Home() {
                 )}
                 <button
                   className="button button-primary form-submit"
-                  disabled={busy || !wallet.publicKey || Boolean(selectedMember || selectedCancelled || (selectedCircle && selectedCircle.account.memberCount >= selectedCircle.account.maxMembers))}
+                  disabled={busy || !wallet.publicKey || Boolean(selectedMember || selectedCancelled || (selectedCircle && safeCount(selectedCircle.account.memberCount) >= safeCount(selectedCircle.account.maxMembers)))}
                 >
                   {selectedMember ? "You are a member" : busy ? "Waiting for wallet" : "Choose turn and join"}
                 </button>

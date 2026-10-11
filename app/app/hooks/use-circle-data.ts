@@ -67,6 +67,16 @@ type MemberAccount = Awaited<ReturnType<AjoCirclesClient["fetchMember"]>>;
 type ApiAccount = { address: string; data: string };
 type ApiCircles = { circles: ApiAccount[]; members: ApiAccount[]; stale: boolean; reason?: string };
 
+function sortCircleRows(left: CircleRow, right: CircleRow) {
+  const leftCreated = left.account?.createdTs;
+  const rightCreated = right.account?.createdTs;
+  if (leftCreated && rightCreated) {
+    const compared = rightCreated.cmp(leftCreated);
+    if (compared !== 0) return compared;
+  }
+  return left.address.toBase58().localeCompare(right.address.toBase58());
+}
+
 async function fetchCircleDirectory(wallet?: string) {
   const response = await fetch(wallet ? `/api/circles?wallet=${encodeURIComponent(wallet)}` : "/api/circles");
   const value = (await response.json()) as ApiCircles & { error?: string };
@@ -229,7 +239,7 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
       if (directoryResult.error) throw directoryResult.error;
       if (walletResult.error) throw walletResult.error;
       const directory = decodeDirectory(directoryResult.data);
-      setCircles(directory.circles.sort((left, right) => right.account.createdTs.cmp(left.account.createdTs)));
+      setCircles(directory.circles.sort(sortCircleRows));
       setDirectoryMembers(directory.members);
       if (wallet.publicKey) {
         const [walletCircles, walletScore, config] = await withRpcRetry(
@@ -292,9 +302,7 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
       );
       setCircles((current) => {
         const next = current.filter((row) => !row.address.equals(address));
-        return [...next, { address, account }].sort((left, right) =>
-          right.account.createdTs.cmp(left.account.createdTs)
-        );
+        return [...next, { address, account }].sort(sortCircleRows);
       });
       if (wallet.publicKey) {
         setScore(selectedScore);

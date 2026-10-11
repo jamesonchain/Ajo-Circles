@@ -5,6 +5,11 @@ import { PublicKey, TransactionInstruction } from "@solana/web3.js";
 
 export { IDL };
 export type { AjoCircles };
+export type AjoProgram = anchor.Program<AjoCircles>;
+type CircleAccount = Awaited<ReturnType<AjoProgram["account"]["circle"]["fetch"]>>;
+type ConfigAccount = Awaited<ReturnType<AjoProgram["account"]["config"]["fetch"]>>;
+type MemberAccount = Awaited<ReturnType<AjoProgram["account"]["member"]["fetch"]>>;
+type ScoreAccount = Awaited<ReturnType<AjoProgram["account"]["ajoScore"]["fetch"]>>;
 
 export const SEEDS = {
   config: "config",
@@ -17,6 +22,23 @@ export const SEEDS = {
 
 const accountCoder = new anchor.BorshAccountsCoder(IDL as never);
 const normalizeAccountName = (name: string) => name.replace(/_/g, "").toLowerCase();
+
+function camelize<T>(value: T): T {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    value instanceof anchor.BN ||
+    value instanceof PublicKey ||
+    value instanceof Uint8Array
+  ) return value;
+  if (Array.isArray(value)) return value.map(camelize) as T;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()),
+      camelize(child),
+    ])
+  ) as T;
+}
 
 function idlAccountName(logicalName: string) {
   const account = IDL.accounts?.find(
@@ -38,26 +60,25 @@ export function accountMemcmp(logicalName: string) {
 }
 
 export function decodeCircle(data: Buffer) {
-  return accountCoder.decode(idlAccountName("circle"), data) as Awaited<ReturnType<AjoCirclesClient["fetchCircle"]>>;
+  return camelize(accountCoder.decode(idlAccountName("circle"), data)) as CircleAccount;
 }
 
 export function decodeMember(data: Buffer) {
-  return accountCoder.decode(idlAccountName("member"), data) as Awaited<ReturnType<AjoCirclesClient["fetchMember"]>>;
+  return camelize(accountCoder.decode(idlAccountName("member"), data)) as MemberAccount;
 }
 
 export function decodeConfig(data: Buffer) {
-  return accountCoder.decode(idlAccountName("config"), data) as Awaited<ReturnType<AjoCirclesClient["fetchConfig"]>>;
+  return camelize(accountCoder.decode(idlAccountName("config"), data)) as ConfigAccount;
 }
 
 export function decodeScore(data: Buffer) {
-  return accountCoder.decode(idlAccountName("ajo_score"), data);
+  return camelize(accountCoder.decode(idlAccountName("ajo_score"), data)) as ScoreAccount;
 }
 
 if (typeof console !== "undefined" && process.env.NODE_ENV !== "production") {
   console.debug("[Ajo Circles] loaded IDL account names", IDL.accounts?.map(({ name }) => name) ?? []);
 }
 
-export type AjoProgram = anchor.Program<AjoCircles>;
 export type IntegerLike = anchor.BN | bigint | number;
 export type InstructionAccounts = Readonly<Record<string, PublicKey>>;
 
@@ -303,31 +324,33 @@ export class AjoCirclesClient {
     return this.buildInstruction("finalizeScore", [], accounts);
   }
 
-  async fetchCircle(address: PublicKey) {
-    return this.program.account.circle.fetch(address);
+  async fetchCircle(address: PublicKey): Promise<CircleAccount> {
+    return camelize(await this.program.account.circle.fetch(address)) as CircleAccount;
   }
 
-  async fetchConfig(address = this.config) {
-    return this.program.account.config.fetch(address);
+  async fetchConfig(address = this.config): Promise<ConfigAccount> {
+    return camelize(await this.program.account.config.fetch(address)) as ConfigAccount;
   }
 
-  async fetchMember(address: PublicKey) {
-    return this.program.account.member.fetch(address);
+  async fetchMember(address: PublicKey): Promise<MemberAccount> {
+    return camelize(await this.program.account.member.fetch(address)) as MemberAccount;
   }
 
-  async fetchMemberForWallet(circle: PublicKey, wallet: PublicKey) {
-    return this.program.account.member.fetchNullable(this.member(circle, wallet));
+  async fetchMemberForWallet(circle: PublicKey, wallet: PublicKey): Promise<MemberAccount | null> {
+    const member = await this.program.account.member.fetchNullable(this.member(circle, wallet));
+    return member ? camelize(member) as MemberAccount : null;
   }
 
-  async fetchScore(wallet: PublicKey) {
-    return this.program.account.ajoScore.fetchNullable(this.score(wallet));
+  async fetchScore(wallet: PublicKey): Promise<ScoreAccount | null> {
+    const score = await this.program.account.ajoScore.fetchNullable(this.score(wallet));
+    return score ? camelize(score) : null;
   }
 
   async listMembers(circle: PublicKey) {
     const members = await this.program.account.member.all([
       { memcmp: { offset: 8 + 32, bytes: circle.toBase58() } },
     ]);
-    return members.sort(
+    return members.map(({ publicKey, account }) => ({ publicKey, account: camelize(account) as MemberAccount })).sort(
       (left, right) => left.account.slot - right.account.slot
     );
   }
@@ -342,23 +365,26 @@ export class AjoCirclesClient {
       ]),
     ]);
     const joined = await Promise.all(
-      memberships.map(async ({ publicKey, account }) => ({
+      memberships.map(async ({ publicKey, account: rawAccount }) => {
+        const account = camelize(rawAccount) as MemberAccount;
+        return {
         memberAddress: publicKey,
         member: account,
         circleAddress: account.circle,
         circle: await this.fetchCircle(account.circle),
-      }))
+        };
+      })
     );
     const joinedAddresses = new Set(joined.map(({ circleAddress }) => circleAddress.toBase58()));
     return [
       ...joined,
       ...createdCircles
         .filter(({ publicKey }) => !joinedAddresses.has(publicKey.toBase58()))
-        .map(({ publicKey, account }) => ({
+        .map(({ publicKey, account: rawAccount }) => ({
           memberAddress: null,
           member: null,
           circleAddress: publicKey,
-          circle: account,
+          circle: camelize(rawAccount) as CircleAccount,
         })),
     ];
   }
