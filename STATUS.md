@@ -105,3 +105,9 @@ The browser no longer calls `getProgramAccounts`. `/api/circles` queries Circle 
 The route and browser decoder now use the generated IDL account names `Circle` and `Member`; typed SDK accessors remain Anchor’s lowercase accessors. The target and SDK IDL JSON files match exactly and use deployed program `B7YcA9vqKUF2Gkj6Ct8AG71a3upQftd7VwPBV7qjn3cw`. A gated SDK test decoded the real devnet Circle `CU8i9Yg43chjyRL6qHbFcmoBXvvpoWKnxSb1V747KVpH` successfully.
 
 Balances now use the configured public test mint, the shared devnet RPC connection, and log the connected public key, cluster, and mint in development. Curl against localhost returned 10 current devnet circles and 13 members. App typecheck and ESLint passed, and the SDK tests passed 6 tests.
+
+## 2026 10 11 decoder helper fix
+
+Anchor’s runtime coder requires the exact generated IDL account names, while the stale direct calls used hard coded names. The SDK now owns case insensitive account name lookup, discriminator lookup, and decode helpers for Circle, Member, Config, and Ajo Score. The browser hook and server route use those helpers and skip malformed accounts with warnings instead of blanking the directory. The loaded IDL logged `AjoScore`, `Circle`, `Config`, and `Member`; target, SDK JSON, SDK generated types, and deployed program address match.
+
+The real devnet decoder test passed for Circle `CU8i9Yg43chjyRL6qHbFcmoBXvvpoWKnxSb1V747KVpH`. Local curl returned 10 circles and 13 members, and the wallet filtered response for the connected wallet returned 4 circles. App typecheck, ESLint, and all 6 SDK tests passed. A browser surface was unavailable for visual verification, so the Next issues badge could not be inspected interactively.

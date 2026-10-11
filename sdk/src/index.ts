@@ -15,6 +15,48 @@ export const SEEDS = {
   score: "score",
 } as const;
 
+const accountCoder = new anchor.BorshAccountsCoder(IDL as never);
+const normalizeAccountName = (name: string) => name.replace(/_/g, "").toLowerCase();
+
+function idlAccountName(logicalName: string) {
+  const account = IDL.accounts?.find(
+    ({ name }) => normalizeAccountName(name) === normalizeAccountName(logicalName)
+  );
+  if (!account) {
+    const available = IDL.accounts?.map(({ name }) => name).join(", ") ?? "none";
+    throw new Error(`IDL account ${logicalName} was not found. Available accounts: ${available}`);
+  }
+  return account.name;
+}
+
+export function accountDiscriminator(logicalName: string) {
+  return accountCoder.accountDiscriminator(idlAccountName(logicalName));
+}
+
+export function accountMemcmp(logicalName: string) {
+  return { memcmp: { offset: 0, bytes: anchor.utils.bytes.bs58.encode(accountDiscriminator(logicalName)) } };
+}
+
+export function decodeCircle(data: Buffer) {
+  return accountCoder.decode(idlAccountName("circle"), data) as Awaited<ReturnType<AjoCirclesClient["fetchCircle"]>>;
+}
+
+export function decodeMember(data: Buffer) {
+  return accountCoder.decode(idlAccountName("member"), data) as Awaited<ReturnType<AjoCirclesClient["fetchMember"]>>;
+}
+
+export function decodeConfig(data: Buffer) {
+  return accountCoder.decode(idlAccountName("config"), data) as Awaited<ReturnType<AjoCirclesClient["fetchConfig"]>>;
+}
+
+export function decodeScore(data: Buffer) {
+  return accountCoder.decode(idlAccountName("ajo_score"), data);
+}
+
+if (typeof console !== "undefined" && process.env.NODE_ENV !== "production") {
+  console.debug("[Ajo Circles] loaded IDL account names", IDL.accounts?.map(({ name }) => name) ?? []);
+}
+
 export type AjoProgram = anchor.Program<AjoCircles>;
 export type IntegerLike = anchor.BN | bigint | number;
 export type InstructionAccounts = Readonly<Record<string, PublicKey>>;

@@ -8,6 +8,8 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { PublicKey } from "@solana/web3.js";
 import {
   AjoCirclesClient,
+  decodeCircle,
+  decodeMember,
   type AjoCircles,
   type WalletCircle,
 } from "ajo_circles_sdk";
@@ -165,16 +167,24 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
   const decodeDirectory = useCallback((value: ApiCircles | undefined) => {
     if (!value) return { circles: [] as CircleRow[], members: [] as { address: PublicKey; account: MemberAccount }[] };
     return {
-      circles: value.circles.map(({ address, data }) => ({
-        address: new PublicKey(address),
-        account: client.program.coder.accounts.decode("Circle", Buffer.from(data, "base64")) as CircleAccount,
-      })),
-      members: value.members.map(({ address, data }) => ({
-        address: new PublicKey(address),
-        account: client.program.coder.accounts.decode("Member", Buffer.from(data, "base64")) as MemberAccount,
-      })),
+      circles: value.circles.flatMap(({ address, data }) => {
+        try {
+          return [{ address: new PublicKey(address), account: decodeCircle(Buffer.from(data, "base64")) }];
+        } catch (error) {
+          console.warn("[Ajo Circles] skipped an undecodable Circle account", address, error);
+          return [];
+        }
+      }),
+      members: value.members.flatMap(({ address, data }) => {
+        try {
+          return [{ address: new PublicKey(address), account: decodeMember(Buffer.from(data, "base64")) }];
+        } catch (error) {
+          console.warn("[Ajo Circles] skipped an undecodable Member account", address, error);
+          return [];
+        }
+      }),
     };
-  }, [client]);
+  }, []);
 
   useEffect(() => {
     if (!directoryData) return;

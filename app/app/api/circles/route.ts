@@ -1,6 +1,10 @@
-import * as anchor from "@coral-xyz/anchor";
 import { Connection, PublicKey } from "@solana/web3.js";
-import { IDL } from "ajo_circles_sdk";
+import {
+  IDL,
+  accountMemcmp,
+  decodeCircle,
+  decodeMember,
+} from "ajo_circles_sdk";
 
 export const runtime = "nodejs";
 
@@ -10,28 +14,29 @@ type AccountRow = { address: string; data: string };
 type CircleResponse = { circles: AccountRow[]; members: AccountRow[]; stale: boolean; reason?: string };
 const cached = new Map<string, { expiresAt: number; value: CircleResponse }>();
 
-function discriminator(name: string) {
-  return anchor.utils.bytes.bs58.encode(new anchor.BorshAccountsCoder(IDL as never).accountDiscriminator(name));
-}
-
 async function load(rpc: string, wallet?: PublicKey): Promise<CircleResponse> {
   const connection = new Connection(rpc, "confirmed");
   const circleFilters = [
-    { memcmp: { offset: 0, bytes: discriminator("Circle") } },
+    accountMemcmp("circle"),
     ...(wallet ? [{ memcmp: { offset: 8, bytes: wallet.toBase58() } }] : []),
   ];
   const memberFilters = [
-    { memcmp: { offset: 0, bytes: discriminator("Member") } },
+    accountMemcmp("member"),
     ...(wallet ? [{ memcmp: { offset: 8, bytes: wallet.toBase58() } }] : []),
   ];
   const [circles, members] = await Promise.all([
     connection.getProgramAccounts(programId, { filters: circleFilters }),
     connection.getProgramAccounts(programId, { filters: memberFilters }),
   ]);
-  const circleRows = circles.map(({ pubkey, account }) => ({
-      address: pubkey.toBase58(),
-      data: account.data.toString("base64"),
-    }));
+  const circleRows = circles.flatMap(({ pubkey, account }) => {
+    try {
+      decodeCircle(account.data);
+      return [{ address: pubkey.toBase58(), data: account.data.toString("base64") }];
+    } catch (error) {
+      console.warn("[Ajo Circles] skipped an undecodable Circle account", pubkey.toBase58(), error);
+      return [];
+    }
+  });
   if (wallet && members.length) {
     const known = new Set(circleRows.map((row) => row.address));
     const missingAddresses = members
@@ -39,18 +44,31 @@ async function load(rpc: string, wallet?: PublicKey): Promise<CircleResponse> {
       .filter((address) => !known.has(address.toBase58()));
     const missing = await connection.getMultipleAccountsInfo(missingAddresses, "confirmed");
     missing.forEach((account, index) => {
-      if (account) circleRows.push({
-        address: missingAddresses[index].toBase58(),
-        data: account.data.toString("base64"),
-      });
+      if (account) {
+        try {
+          decodeCircle(account.data);
+          circleRows.push({
+            address: missingAddresses[index].toBase58(),
+            data: account.data.toString("base64"),
+          });
+        } catch (error) {
+          console.warn("[Ajo Circles] skipped an undecodable Circle account", missingAddresses[index].toBase58(), error);
+        }
+      }
     });
   }
+  const memberRows = members.flatMap(({ pubkey, account }) => {
+    try {
+      decodeMember(account.data);
+      return [{ address: pubkey.toBase58(), data: account.data.toString("base64") }];
+    } catch (error) {
+      console.warn("[Ajo Circles] skipped an undecodable Member account", pubkey.toBase58(), error);
+      return [];
+    }
+  });
   return {
     circles: circleRows,
-    members: members.map(({ pubkey, account }) => ({
-      address: pubkey.toBase58(),
-      data: account.data.toString("base64"),
-    })),
+    members: memberRows,
     stale: false,
   };
 }
