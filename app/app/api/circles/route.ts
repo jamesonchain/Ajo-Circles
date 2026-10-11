@@ -17,11 +17,11 @@ function discriminator(name: string) {
 async function load(rpc: string, wallet?: PublicKey): Promise<CircleResponse> {
   const connection = new Connection(rpc, "confirmed");
   const circleFilters = [
-    { memcmp: { offset: 0, bytes: discriminator("circle") } },
+    { memcmp: { offset: 0, bytes: discriminator("Circle") } },
     ...(wallet ? [{ memcmp: { offset: 8, bytes: wallet.toBase58() } }] : []),
   ];
   const memberFilters = [
-    { memcmp: { offset: 0, bytes: discriminator("member") } },
+    { memcmp: { offset: 0, bytes: discriminator("Member") } },
     ...(wallet ? [{ memcmp: { offset: 8, bytes: wallet.toBase58() } }] : []),
   ];
   const [circles, members] = await Promise.all([

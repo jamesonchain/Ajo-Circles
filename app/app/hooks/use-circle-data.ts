@@ -26,6 +26,11 @@ function rpcReason(error: unknown) {
   return message.replace(/^Error:\s*/i, "").split("\n")[0].slice(0, 180);
 }
 
+function balanceMint(fallback: PublicKey) {
+  const configured = process.env.NEXT_PUBLIC_TEST_MINT_ADDRESS;
+  return configured ? new PublicKey(configured) : fallback;
+}
+
 async function withRpcRetry<T>(
   task: () => Promise<T>,
   onRetry: () => void,
@@ -162,11 +167,11 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
     return {
       circles: value.circles.map(({ address, data }) => ({
         address: new PublicKey(address),
-        account: client.program.coder.accounts.decode("circle", Buffer.from(data, "base64")) as CircleAccount,
+        account: client.program.coder.accounts.decode("Circle", Buffer.from(data, "base64")) as CircleAccount,
       })),
       members: value.members.map(({ address, data }) => ({
         address: new PublicKey(address),
-        account: client.program.coder.accounts.decode("member", Buffer.from(data, "base64")) as MemberAccount,
+        account: client.program.coder.accounts.decode("Member", Buffer.from(data, "base64")) as MemberAccount,
       })),
     };
   }, [client]);
@@ -234,8 +239,14 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
         const joinedAddresses = new Set(joined.map((row) => row.circleAddress.toBase58()));
         setMemberships([...joined, ...walletCircles.circles.filter((row) => row.account.creator.equals(wallet.publicKey!)).filter((row) => !joinedAddresses.has(row.address.toBase58())).map((row) => ({ memberAddress: null, member: null, circleAddress: row.address, circle: row.account }))]);
         setScore(walletScore);
+        const mint = balanceMint(config.mint);
+        console.debug("[Ajo Circles] balance source", {
+          publicKey: wallet.publicKey.toBase58(),
+          cluster: "devnet",
+          mint: mint.toBase58(),
+        });
         const balances = await withRpcRetry(
-          () => readBalances(wallet.publicKey!, config.mint),
+          () => readBalances(wallet.publicKey!, mint),
           onRpcRetry,
           onRpcSuccess
         );
@@ -278,7 +289,7 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
       if (wallet.publicKey) {
         setScore(selectedScore);
         const balances = await withRpcRetry(
-          () => readBalances(wallet.publicKey!, account.mint),
+          () => readBalances(wallet.publicKey!, balanceMint(account.mint)),
           onRpcRetry,
           onRpcSuccess
         );

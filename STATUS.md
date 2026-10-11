@@ -99,3 +99,9 @@ The Phantom browser checklist has not been executed in an available browser sess
 ## 2026 10 11 server backed directory
 
 The browser no longer calls `getProgramAccounts`. `/api/circles` queries Circle and Member accounts on the server with discriminator filters, caches each directory or wallet result for 5 seconds, retries once on the public devnet RPC, and returns stale data with the real reason when both endpoints fail. React Query keeps previous directory data during refresh, and confirmed actions clear the server cache, invalidate client queries, then refresh the selected circle directly. App typecheck and ESLint pass.
+
+## 2026 10 11 IDL decoder and balance fix
+
+The route and browser decoder now use the generated IDL account names `Circle` and `Member`; typed SDK accessors remain Anchor’s lowercase accessors. The target and SDK IDL JSON files match exactly and use deployed program `B7YcA9vqKUF2Gkj6Ct8AG71a3upQftd7VwPBV7qjn3cw`. A gated SDK test decoded the real devnet Circle `CU8i9Yg43chjyRL6qHbFcmoBXvvpoWKnxSb1V747KVpH` successfully.
+
+Balances now use the configured public test mint, the shared devnet RPC connection, and log the connected public key, cluster, and mint in development. Curl against localhost returned 10 current devnet circles and 13 members. App typecheck and ESLint passed, and the SDK tests passed 6 tests.
