@@ -55,3 +55,11 @@ The app typecheck and ESLint pass. Four issues were found and fixed:
 3. Refresh polling retried too early and kept the busy banner visible. Selected circles now poll every 8 seconds only while visible, use batched account reads, retry rate limits with backoff, clear the banner after success, and show loading skeletons before an empty state.
 
 4. The development overlay reported hydration and effect warnings, and the app still used the removed Next lint command. Time values now start deterministically, browser effects are deferred, wallet errors are forwarded to friendly toasts, and ESLint uses the Next 16 flat configuration.
+
+## 2026 10 11 cancellation feature
+
+Circle cancellation is implemented in the app and SDK. A creator can cancel only a Forming circle through a confirmation dialog, one simulated transaction, one wallet approval, disabled in flight, Explorer success feedback, and an optimistic cache update. Cancelled circles are hidden from Open circles and the default My circles view, with a Show cancelled toggle and muted badge.
+
+Members of a cancelled circle see the refund instruction and Refund my deposit action. The refund uses the existing refund_deposit instruction and returns the member deposit to that member’s test USDC account. Cancelled is now an explicit SDK status mapping and cancelled circles cannot be joined.
+
+App typecheck and ESLint pass. No Anchor program changes were needed.

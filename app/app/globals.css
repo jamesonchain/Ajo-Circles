@@ -402,6 +402,58 @@ h3 {
   text-align: left;
   cursor: pointer;
 }
+.circle-row-shell {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.circle-row-shell .circle-row {
+  flex: 1;
+}
+.row-cancel-button,
+.cancel-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+}
+.row-cancel-button {
+  align-self: center;
+  padding: 8px 2px;
+  font-size: 11px;
+}
+.row-cancel-button:hover,
+.cancel-toggle:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.cancelled-row {
+  opacity: .72;
+}
+.cancelled-badge {
+  align-self: center;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.section-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.confirm-dialog p,
+.refund-note {
+  color: var(--muted);
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
 .circle-row:hover,
 .circle-row-selected {
   background: #fffdf756;

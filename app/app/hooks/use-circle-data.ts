@@ -171,6 +171,23 @@ export function useCircleData(selectedCircleAddress = "") {
     }
   }, [client, onRpcRetry, onRpcSuccess, selectedCircleAddress]);
 
+  const markCircleCancelled = useCallback((address: PublicKey) => {
+    setCircles((current) =>
+      current.map((row) =>
+        row.address.equals(address)
+          ? { ...row, account: { ...row.account, status: { cancelled: {} } } }
+          : row
+      )
+    );
+    setMemberships((current) =>
+      current.map((row) =>
+        row.circleAddress.equals(address)
+          ? { ...row, circle: { ...row.circle, status: { cancelled: {} } } }
+          : row
+      )
+    );
+  }, []);
+
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), 0);
     return () => window.clearTimeout(timer);
@@ -201,6 +218,7 @@ export function useCircleData(selectedCircleAddress = "") {
     error,
     refresh,
     refreshSelected,
+    markCircleCancelled,
     wallet,
   };
 }

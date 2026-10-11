@@ -35,6 +35,15 @@ export type WalletCircle =
       circle: Awaited<ReturnType<AjoProgram["account"]["circle"]["fetch"]>>;
     };
 
+export type CircleStatusName = "forming" | "active" | "completed" | "cancelled" | "unknown";
+
+export function circleStatusName(status: object): CircleStatusName {
+  const key = Object.keys(status)[0];
+  return key === "forming" || key === "active" || key === "completed" || key === "cancelled"
+    ? key
+    : "unknown";
+}
+
 export type PaymentDue = CircleMembership & {
   deadline: bigint;
 };

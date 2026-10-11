@@ -28,7 +28,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { calculateDeposit, type CircleMembership } from "ajo_circles_sdk";
+import { calculateDeposit, circleStatusName, type CircleMembership } from "ajo_circles_sdk";
 import { CircleRing } from "./components/circle-ring";
 import { useCircleData } from "./hooks/use-circle-data";
 
@@ -58,7 +58,7 @@ function compactAddress(address: string) {
 }
 
 function statusName(status: object) {
-  const key = Object.keys(status)[0] ?? "unknown";
+  const key = circleStatusName(status);
   return key.charAt(0).toUpperCase() + key.slice(1);
 }
 
@@ -171,6 +171,7 @@ export default function Home() {
     error,
     refresh,
     refreshSelected,
+    markCircleCancelled,
     wallet,
   } = useCircleData(selectedAddress);
   const [selectedMembers, setSelectedMembers] = useState<
@@ -193,6 +194,8 @@ export default function Home() {
   const [shareReady, setShareReady] = useState(false);
   const [clock, setClock] = useState(0);
   const [testMoneyBusy, setTestMoneyBusy] = useState(false);
+  const [showCancelled, setShowCancelled] = useState(false);
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
 
   const selectedCircle = useMemo(
     () => circles.find(({ address }) => address.toBase58() === selectedAddress),
@@ -206,6 +209,10 @@ export default function Home() {
     [memberships, selectedAddress]
   );
   const selectedMember = selectedMembership?.member;
+  const selectedCancelled = Boolean(selectedCircle && circleStatusName(selectedCircle.account.status) === "cancelled");
+  const selectedIsCreator = Boolean(
+    selectedCircle && wallet.publicKey && selectedCircle.account.creator.equals(wallet.publicKey)
+  );
   const activeCount = circles.filter(({ account }) =>
     isActive(account.status)
   ).length;
@@ -650,6 +657,50 @@ export default function Home() {
     }
   }
 
+  async function cancelCircle() {
+    if (!selectedCircle || !wallet.publicKey || !selectedIsCreator) return;
+    try {
+      const signature = await sendInstruction(
+        "Circle cancelled",
+        await client.cancelCircle({
+          creator: wallet.publicKey,
+          circle: selectedCircle.address,
+        })
+      );
+      markCircleCancelled(selectedCircle.address);
+      setCancelConfirmOpen(false);
+      showNotice(
+        "Circle cancelled. Members can now refund their deposits.",
+        false,
+        `https://explorer.solana.com/tx/${signature}?cluster=devnet`
+      );
+    } catch (cause) {
+      showNotice(friendlyError(cause), true);
+    }
+  }
+
+  async function refundMyDeposit() {
+    if (!selectedCircle || !wallet.publicKey || !selectedMembership?.memberAddress) return;
+    try {
+      const currentConfig = await client.fetchConfig();
+      const destination = await getAssociatedTokenAddress(currentConfig.mint, wallet.publicKey);
+      await sendInstruction(
+        "Deposit refunded",
+        await client.refundDeposit({
+          wallet: wallet.publicKey,
+          circle: selectedCircle.address,
+          member: selectedMembership.memberAddress,
+          depositVault: client.vault("deposit", selectedCircle.address),
+          destination,
+          mint: currentConfig.mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+      );
+    } catch (cause) {
+      showNotice(friendlyError(cause), true);
+    }
+  }
+
   async function copyInvite(address: string) {
     await navigator.clipboard.writeText(
       `${window.location.origin}/?circle=${address}`
@@ -808,6 +859,9 @@ export default function Home() {
   const explorerLink = selectedAddress
     ? `${explorerBase}/${selectedAddress}?cluster=devnet`
     : "";
+  const visibleMemberships = memberships.filter(
+    ({ circle }) => showCancelled || circleStatusName(circle.status) !== "cancelled"
+  );
 
   return (
     <main className="site-shell">
@@ -890,12 +944,19 @@ export default function Home() {
               <span className="eyebrow">My circles</span>
               <h2>Circle activity</h2>
             </div>
-            {wallet.publicKey && (
-              <span className="wallet-address">
-                <Wallet size={15} />{" "}
-                {compactAddress(wallet.publicKey.toBase58())}
-              </span>
-            )}
+            <div className="section-head-actions">
+              {wallet.publicKey && (
+                <span className="wallet-address">
+                  <Wallet size={15} />{" "}
+                  {compactAddress(wallet.publicKey.toBase58())}
+                </span>
+              )}
+              {wallet.publicKey && memberships.some(({ circle }) => circleStatusName(circle.status) === "cancelled") && (
+                <button className="cancel-toggle" onClick={() => setShowCancelled((value) => !value)}>
+                  {showCancelled ? "Hide cancelled" : "Show cancelled"}
+                </button>
+              )}
+            </div>
           </div>
 
           {!wallet.publicKey ? (
@@ -915,13 +976,13 @@ export default function Home() {
                 <div className="circle-skeleton" key={index} />
               ))}
             </div>
-          ) : memberships.length === 0 ? (
+          ) : visibleMemberships.length === 0 ? (
             <div className="empty-state compact-empty">
               <div className="empty-mark">
                 <Users size={24} />
               </div>
-              <h3>No circles yet</h3>
-              <p>Browse an open circle or create one for your group.</p>
+              <h3>{memberships.length ? "No active circles" : "No circles yet"}</h3>
+              <p>{memberships.length ? "Your cancelled circles are hidden." : "Browse an open circle or create one for your group."}</p>
               <button
                 className="button button-gold"
                 onClick={() => setDialog("create")}
@@ -931,60 +992,41 @@ export default function Home() {
             </div>
           ) : (
             <div className="circle-table" role="list">
-              {memberships.map(
+              {visibleMemberships.map(
                 ({ memberAddress, member, circleAddress, circle }) => {
                   const active = isActive(circle.status);
+                  const cancelled = circleStatusName(circle.status) === "cancelled";
+                  const creator = Boolean(wallet.publicKey && circle.creator.equals(wallet.publicKey));
                   const due =
                     Boolean(member) &&
                     active &&
                     ((member?.paidBitmask ?? 0) & (1 << circle.currentRound)) === 0;
                   const selected = selectedAddress === circleAddress.toBase58();
                   return (
-                    <button
-                      className={`circle-row ${
-                        selected ? "circle-row-selected" : ""
-                      }`}
+                    <div
+                      className={`circle-row-shell ${cancelled ? "cancelled-row" : ""}`}
                       key={memberAddress?.toBase58() ?? circleAddress.toBase58()}
-                      onClick={() =>
-                        setSelectedAddress(circleAddress.toBase58())
-                      }
                       role="listitem"
                     >
-                      <span className="circle-row-icon">
-                        {circle.name.slice(0, 1).toUpperCase()}
-                      </span>
-                      <span className="circle-row-copy">
-                        <strong>{circle.name}</strong>
-                        <small>
-                          {active
-                            ? `Round ${Math.min(
-                                circle.currentRound + 1,
-                                circle.maxMembers
-                              )} of ${circle.maxMembers}`
-                            : member
-                            ? statusName(circle.status)
-                            : "Creator"}
-                        </small>
-                      </span>
-                      <span
-                        className={`state-pill ${
-                          due ? "state-due" : active ? "state-current" : ""
-                        }`}
-                      >
-                        {due
-                          ? "Payment due"
-                          : active
-                          ? "On track"
-                          : member
-                          ? statusName(circle.status)
-                          : "Creator"}
-                      </span>
-                      <span className="circle-row-amount">
-                        {amountText(circle.contribution.toString())}
-                        <small>USDC</small>
-                      </span>
-                      <ArrowUpRight size={17} className="row-arrow" />
-                    </button>
+                      <button className={`circle-row ${selected ? "circle-row-selected" : ""}`} onClick={() => setSelectedAddress(circleAddress.toBase58())}>
+                        <span className="circle-row-icon">{circle.name.slice(0, 1).toUpperCase()}</span>
+                        <span className="circle-row-copy">
+                          <strong>{circle.name}</strong>
+                          <small>{active ? `Round ${Math.min(circle.currentRound + 1, circle.maxMembers)} of ${circle.maxMembers}` : member ? statusName(circle.status) : "Creator"}</small>
+                        </span>
+                        <span className={`state-pill ${due ? "state-due" : active ? "state-current" : ""}`}>
+                          {due ? "Payment due" : active ? "On track" : member ? statusName(circle.status) : "Creator"}
+                        </span>
+                        <span className="circle-row-amount">{amountText(circle.contribution.toString())}<small>USDC</small></span>
+                        <ArrowUpRight size={17} className="row-arrow" />
+                      </button>
+                      {cancelled && <span className="cancelled-badge">Cancelled</span>}
+                      {creator && !cancelled && circleStatusName(circle.status) === "forming" && (
+                        <button className="row-cancel-button" disabled={busy} onClick={() => { setSelectedAddress(circleAddress.toBase58()); setCancelConfirmOpen(true); }}>
+                          Cancel
+                        </button>
+                      )}
+                    </div>
                   );
                 }
               )}
@@ -1138,7 +1180,7 @@ export default function Home() {
                 <span>Payment window</span>
                 <strong>
                   {selectedCircle
-                    ? selectedCircle.account.memberCount <
+                    ? selectedCancelled || selectedCircle.account.memberCount <
                       selectedCircle.account.maxMembers
                       ? "Not started"
                       : deadlineText(
@@ -1161,6 +1203,16 @@ export default function Home() {
               </div>
             </div>
             <div className="primary-action-row">
+              {selectedIsCreator && circleStatusName(selectedCircle?.account.status ?? {}) === "forming" && (
+                <button className="button button-outline" onClick={() => setCancelConfirmOpen(true)} disabled={busy}>
+                  Cancel circle
+                </button>
+              )}
+              {selectedCancelled && selectedMembership?.member && selectedMembership.member.depositRemaining.gt(new anchor.BN(0)) && (
+                <button className="button button-primary" onClick={() => void refundMyDeposit()} disabled={busy}>
+                  <ArrowDownToLine size={18} /> Refund my deposit
+                </button>
+              )}
               {primaryAction && (
                 <button
                   className="button button-gold primary-circle-action"
@@ -1169,6 +1221,9 @@ export default function Home() {
                 >
                   {ActionIcon && <ActionIcon size={18} />} {primaryAction.label}
                 </button>
+              )}
+              {selectedCancelled && selectedMembership?.member && selectedMembership.member.depositRemaining.gt(new anchor.BN(0)) && (
+                <p className="muted-copy refund-note">This circle was cancelled. Refund your deposit to return your funds.</p>
               )}
               {selectedIsActive && deadlinePassed && wallet.publicKey && missedMember && (
                 <button
@@ -1503,12 +1558,28 @@ export default function Home() {
                 )}
                 <button
                   className="button button-primary form-submit"
-                  disabled={busy || !wallet.publicKey || Boolean(selectedCircle && selectedCircle.account.memberCount >= selectedCircle.account.maxMembers)}
+                  disabled={busy || !wallet.publicKey || Boolean(selectedCircle && (selectedCircle.account.memberCount >= selectedCircle.account.maxMembers || selectedCancelled))}
                 >
                   {busy ? "Waiting for wallet" : "Choose turn and join"}
                 </button>
               </form>
             )}
+          </motion.section>
+        </div>
+      )}
+
+      {cancelConfirmOpen && (
+        <div className="dialog-backdrop" role="presentation">
+          <motion.section className="dialog-panel confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="cancel-dialog-title" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
+            <div className="dialog-head">
+              <div><span className="eyebrow">Cancel circle</span><h2 id="cancel-dialog-title">Cancel this circle?</h2></div>
+              <button className="icon-button" aria-label="Close dialog" onClick={() => setCancelConfirmOpen(false)}><X size={19} /></button>
+            </div>
+            <p>Members get their deposits back. This cannot be undone.</p>
+            <div className="dialog-actions">
+              <button className="button button-quiet" onClick={() => setCancelConfirmOpen(false)} disabled={busy}>Cancel</button>
+              <button className="button button-primary" onClick={() => void cancelCircle()} disabled={busy}>{busy ? "Cancelling" : "Confirm"}</button>
+            </div>
           </motion.section>
         </div>
       )}
