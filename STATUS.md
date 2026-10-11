@@ -152,3 +152,34 @@ Circle: 3biCrH6JumLyPxS1XTiJatFpRKg5U6FojL9bnTE7raWj
 ```
 
 The confirmed action signatures were recorded by the script for funding, creation, both joins, both payments, default settlement, and payout claim. App typecheck and ESLint pass. Browser visual verification was unavailable in this session.
+
+## 2026 10 11 demo payment periods
+
+The Create circle schedule now offers Demo: every 60 seconds and Demo: every 3 minutes above the normal daily, weekly, two week, and monthly choices. Demo schedules use period seconds 60 or 180, start when the circle becomes full, hide the weekday picker, and show a Demo mode, devnet only note. Circles with a period of 180 seconds or less show a Demo badge in the directory and selected circle panel. Demo countdowns refresh every second.
+
+After a demo payment window ends, every unpaid member row exposes Settle default. Once all unpaid members are settled, the selected circle shows Next round starts now after the turn holder claims.
+
+The deployed program already accepts periods below 60 seconds and the devnet Config minimum is 1 second, so no program or IDL change was needed.
+
+Devnet verification passed with a fresh 60 second circle:
+
+```text
+PASS: three wallets funded
+PASS: creator shows 1 / 3
+PASS: wallet two joins and its USDC drops
+PASS: wallet three joins and circle is full
+PASS: wallet one pays round one
+PASS: wallet three pays round one
+PASS: covered default settles
+PASS: turn holder claims payout
+BALANCES: creator joined pot=0 protected=20000000
+BALANCES: wallet two joined pot=0 protected=30000000
+BALANCES: wallet three joined pot=0 protected=40000000
+BALANCES: wallet one paid pot=10000000 protected=40000000
+BALANCES: wallet three paid pot=20000000 protected=40000000
+BALANCES: default covered pot=30000000 protected=30000000
+BALANCES: payout claimed pot=0 protected=30000000
+Circle: 3GaxtHiXDnaFkiTwDBYr8FN9RfDsa37NpP1s8iViSxiB
+```
+
+App typecheck and ESLint pass.

@@ -301,6 +301,7 @@ export default function Home() {
     [memberships, selectedAddress]
   );
   const selectedMember = selectedMembership?.member;
+  const selectedIsDemo = Boolean(selectedCircle && safeCount(selectedCircle.account.periodSecs) <= 180);
   const selectedCancelled = Boolean(selectedCircle && circleStatusName(selectedCircle.account.status) === "cancelled");
   const selectedIsCreator = Boolean(
     selectedCircle && wallet.publicKey && selectedCircle.account.creator.equals(wallet.publicKey)
@@ -400,12 +401,12 @@ export default function Home() {
 
   useEffect(() => {
     const initial = window.setTimeout(() => setClock(Date.now()), 0);
-    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
+    const timer = window.setInterval(() => setClock(Date.now()), selectedIsDemo ? 1_000 : 30_000);
     return () => {
       window.clearTimeout(initial);
       window.clearInterval(timer);
     };
-  }, []);
+  }, [selectedIsDemo]);
 
   const showNotice = useCallback((message: string, isError = false, link = "") => {
     setNotice(message);
@@ -561,7 +562,7 @@ export default function Home() {
     }
     const amount = Math.round(Number(contribution) * 10 ** decimals);
     const membersCount = Number(maxMembers);
-    const periodSeconds = startMode === "demo" ? 60 : {
+    const periodSeconds = frequency === "demo60" ? 60 : frequency === "demo180" ? 180 : {
       daily: 86_400,
       weekly: 604_800,
       biweekly: 1_209_600,
@@ -576,7 +577,7 @@ export default function Home() {
       membersCount > 12
     ) {
       showNotice(
-        "Enter a name, positive amount, period of at least one day, and 3 to 12 members.",
+        "Enter a name, positive amount, valid payment period, and 3 to 12 members.",
         true
       );
       return;
@@ -799,6 +800,31 @@ export default function Home() {
           caller: wallet.publicKey,
           circle: selectedCircle.address,
           member: client.member(selectedCircle.address, missed.wallet),
+          depositVault: client.vault("deposit", selectedCircle.address),
+          potVault: client.vault("pot", selectedCircle.address),
+          mint: selectedCircle.account.mint,
+          tokenProgram,
+        })
+      );
+    } catch (cause) {
+      showNotice(friendlyError(cause), true);
+    }
+  }
+
+  async function settleMemberDefault(member: CircleMembership["member"]) {
+    if (!selectedCircle || !wallet.publicKey) return;
+    try {
+      const mintInfo = await connection.getAccountInfo(selectedCircle.account.mint, "confirmed");
+      const tokenProgram = mintInfo?.owner;
+      if (!tokenProgram || (!tokenProgram.equals(TOKEN_PROGRAM_ID) && !tokenProgram.equals(TOKEN_2022_PROGRAM_ID))) {
+        throw new Error("The circle mint token program is unavailable.");
+      }
+      await sendInstruction(
+        "Default settled",
+        await client.settleDefault({
+          caller: wallet.publicKey,
+          circle: selectedCircle.address,
+          member: client.member(selectedCircle.address, member.wallet),
           depositVault: client.vault("deposit", selectedCircle.address),
           potVault: client.vault("pot", selectedCircle.address),
           mint: selectedCircle.account.mint,
@@ -1401,6 +1427,7 @@ export default function Home() {
             {selectedCircle && (
               <p>
                 {compactAddress(selectedCircle.address.toBase58())}{" "}
+                {selectedIsDemo && <span className="state-pill state-current">Demo</span>}{" "}
                 <a
                   href={explorerLink}
                   target="_blank"
@@ -1606,10 +1633,12 @@ export default function Home() {
                     {selectedMembers.map((member) => {
                       const paid = (member.paidBitmask & currentRoundBit) !== 0;
                       const status = member.defaults > 0 ? "Covered by deposit" : paid ? "Paid" : "Due";
-                      return <div className="member-row" key={member.wallet.toBase58()}><span><strong>Turn {member.slot + 1}</strong><small>{compactAddress(member.wallet.toBase58())}</small></span><span className={`member-badge ${member.defaults > 0 ? "member-missed" : paid ? "member-paid" : "member-due"}`}>{status}</span></div>;
+                      const canSettle = selectedIsActive && deadlinePassed && !paid && member.defaults === 0;
+                      return <div className="member-row" key={member.wallet.toBase58()}><span><strong>Turn {member.slot + 1}</strong><small>{compactAddress(member.wallet.toBase58())}</small></span><span className={`member-badge ${member.defaults > 0 ? "member-missed" : paid ? "member-paid" : "member-due"}`}>{status}</span>{canSettle && <button className="button button-quiet" onClick={() => void settleMemberDefault(member)} disabled={busy}>Settle default</button>}</div>;
                     })}
                   </div>
                 </div>
+                {selectedIsActive && deadlinePassed && unpaidCount === 0 && <p className="member-state-line">Next round starts now after the turn holder claims.</p>}
                 {debugMode && (
                   <pre className="debug-panel">{JSON.stringify({
                     status: statusName(selectedCircle.account.status),
@@ -1676,6 +1705,7 @@ export default function Home() {
                           {compactAddress(address.toBase58())} ·{" "}
                           {statusName(account.status)}
                         </p>
+                        {safeCount(account.periodSecs) <= 180 && <span className="state-pill state-current">Demo</span>}
                         {membership?.member && <span className="directory-joined">Joined, turn {membership.member.slot + 1}</span>}
                         {creator && !membership?.member && <span className="directory-joined">You created this circle</span>}
                       </div>
@@ -1802,13 +1832,16 @@ export default function Home() {
                 {createStep === 2 && <>
                 <div className="wizard-progress">Step 2 of 3, payment schedule</div>
                 <label>How often will everyone contribute?
-                  <select value={frequency} onChange={(event) => setFrequency(event.target.value)}>
+                  <select value={frequency} onChange={(event) => { const value = event.target.value; setFrequency(value); if (value === "demo60" || value === "demo180") setStartMode("full"); }}>
+                    <option value="demo60">Demo: every 60 seconds</option>
+                    <option value="demo180">Demo: every 3 minutes</option>
                     <option value="daily">Every day</option>
                     <option value="weekly">Every week</option>
                     <option value="biweekly">Every two weeks</option>
                     <option value="monthly">Every month</option>
                   </select>
                 </label>
+                {(frequency === "demo60" || frequency === "demo180") && <small className="form-help">Demo mode, devnet only</small>}
                 <label>How many people are in the circle?
                   <select value={maxMembers} onChange={(event) => setMaxMembers(event.target.value)}>
                     {Array.from({ length: 10 }, (_, index) => index + 3).map((count) => <option key={count} value={count}>{count} members</option>)}
@@ -1820,13 +1853,12 @@ export default function Home() {
                   </select>
                 </label>
                 <label>When should payments start?
-                  <select value={startMode} onChange={(event) => setStartMode(event.target.value as "full" | "demo")}>
-                    <option value="full">When the circle is full</option>
-                    <option value="demo">Demo: start now with a 60 second period</option>
+                  <select value="full" disabled={frequency === "demo60" || frequency === "demo180"} onChange={(event) => setStartMode(event.target.value as "full" | "demo")}>
+                    <option value="full">Immediately when the circle is full</option>
                   </select>
                 </label>
-                {startMode === "full" && <p className="form-help">Payments follow your chosen weekday.</p>}
-                {startMode === "full" && <label>Payment weekday
+                {frequency !== "demo60" && frequency !== "demo180" && <p className="form-help">Payments follow your chosen weekday.</p>}
+                {frequency !== "demo60" && frequency !== "demo180" && <label>Payment weekday
                   <select value={weekday} onChange={(event) => setWeekday(event.target.value)}>
                     {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day) => <option key={day}>{day}</option>)}
                   </select>
@@ -1834,7 +1866,7 @@ export default function Home() {
                 </>}
                 {createStep === 3 && <>
                 <div className="wizard-progress">Step 3 of 3, review deposits</div>
-                <div className="join-preview"><strong>{circleName}</strong><span>{contribution} USDC each round, {startMode === "demo" ? "demo period of 60 seconds" : `every ${weekday}`}</span><span>{maxMembers} member turns, creator chooses turn {creatorSlot + 1}</span></div>
+                <div className="join-preview"><strong>{circleName}</strong><span>{contribution} USDC each round, {frequency === "demo60" ? "demo period of 60 seconds" : frequency === "demo180" ? "demo period of 3 minutes" : `every ${weekday}`}</span><span>{maxMembers} member turns, creator chooses turn {creatorSlot + 1}</span></div>
                 <div className="slot-deposit-list">
                   {Array.from({ length: Number(maxMembers) }, (_, slot) => (
                     <div className="slot-deposit-row" key={slot}><span>Turn {slot + 1}{slot === 0 ? ", earliest" : ""}</span><strong>{amountText(calculateDeposit(BigInt(Math.round(Number(contribution) * 10 ** decimals)), Number(maxMembers), slot))} USDC</strong></div>
