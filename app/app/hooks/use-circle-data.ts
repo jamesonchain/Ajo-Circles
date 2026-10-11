@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as anchor from "@coral-xyz/anchor";
-import { getAssociatedTokenAddress, unpackAccount } from "@solana/spl-token";
+import { readTokenBalance } from "../lib/token-balance";
 import { useConnection, useWallet, type WalletContextState } from "@solana/wallet-adapter-react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PublicKey } from "@solana/web3.js";
@@ -25,7 +25,8 @@ function isRateLimited(error: unknown) {
 
 function rpcReason(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/^Error:\s*/i, "").split("\n")[0].slice(0, 180);
+  const reason = message.replace(/^Error:\s*/i, "").split("\n")[0].trim();
+  return reason || "The RPC did not provide a reason.";
 }
 
 function balanceMint(fallback: PublicKey) {
@@ -121,16 +122,16 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
   }, []);
 
   const readBalances = useCallback(async (owner: PublicKey, mint: PublicKey) => {
-    const associatedToken = await getAssociatedTokenAddress(mint, owner);
-    const [ownerAccount, tokenAccount] = await connection.getMultipleAccountsInfo(
-      [owner, associatedToken],
-      "confirmed"
-    );
+    const sol = await connection.getBalance(owner, "confirmed");
+    let usdc = 0n;
+    try {
+      usdc = await readTokenBalance(connection, owner, mint);
+    } catch (error) {
+      console.warn("[Ajo Circles] USDC balance unavailable", error);
+    }
     return {
-      sol: BigInt(ownerAccount?.lamports ?? 0),
-      usdc: tokenAccount
-        ? unpackAccount(associatedToken, tokenAccount, mint).amount
-        : 0n,
+      sol: BigInt(sol),
+      usdc,
     };
   }, [connection]);
 

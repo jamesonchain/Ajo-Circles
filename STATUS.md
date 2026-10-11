@@ -112,6 +112,10 @@ Anchor’s runtime coder requires the exact generated IDL account names, while t
 
 The real devnet decoder test passed for Circle `CU8i9Yg43chjyRL6qHbFcmoBXvvpoWKnxSb1V747KVpH`. Local curl returned 10 circles and 13 members, and the wallet filtered response for the connected wallet returned 4 circles. App typecheck, ESLint, and all 6 SDK tests passed. A browser surface was unavailable for visual verification, so the Next issues badge could not be inspected interactively.
 
+## 2026 10 11 balance and status runtime fix
+
+SOL and test USDC reads are now independent. SOL uses `getBalance`; USDC resolves the mint owner once, derives the associated token account with the matching token program, and treats missing or invalid token accounts as zero without raising the RPC banner. Join and payment balance checks use the same token helper. Status rendering now normalizes Anchor enum variants through one helper, so forming, active, completed, and cancelled circles map correctly and active totals count active circles. Empty RPC errors now use a readable fallback. App typecheck and ESLint pass.
+
 ## 2026 10 11 decoded account shape fix
 
 SDK account decoding now recursively converts snake case fields to camel case while preserving BN, PublicKey, bigint, byte arrays, and arrays. SDK fetch and list methods use the same normalization, and the app safely rehydrates directory accounts through the SDK helpers. Sorting has an address fallback, arithmetic and number rendering have safe defaults, and malformed directory accounts are skipped with warnings. App typecheck, ESLint, and the offline SDK suite passed 5 tests with the gated real devnet test skipped when network access was unavailable.

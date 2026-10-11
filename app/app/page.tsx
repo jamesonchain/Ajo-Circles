@@ -6,7 +6,6 @@ import dynamic from "next/dynamic";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
-  getAccount,
   getAssociatedTokenAddress,
   createAssociatedTokenAccountIdempotentInstruction,
   unpackAccount,
@@ -33,6 +32,7 @@ import { calculateDeposit, circleStatusName, type CircleMembership } from "ajo_c
 import { CircleRing } from "./components/circle-ring";
 import { useCircleData } from "./hooks/use-circle-data";
 import { useDemoWallet } from "./hooks/use-demo-wallet";
+import { readTokenBalance, tokenAccountForMint } from "./lib/token-balance";
 
 const WalletMultiButton = dynamic(
   () =>
@@ -171,7 +171,7 @@ function frequencyText(periodSecs: unknown) {
 }
 
 function isActive(status: object) {
-  return Object.prototype.hasOwnProperty.call(status, "active");
+  return circleStatusName(status) === "active";
 }
 
 function simulationFailure(value: anchor.web3.SimulatedTransactionResponse) {
@@ -618,15 +618,12 @@ export default function Home() {
         return;
       }
       const currentConfig = await client.fetchConfig();
-      const source = await getAssociatedTokenAddress(
-        currentConfig.mint,
-        wallet.publicKey
-      );
-      const sourceAccount = await getAccount(
-        connection,
-        source,
-        "confirmed"
-      ).catch(() => null);
+      const sourceToken = await tokenAccountForMint(connection, wallet.publicKey, currentConfig.mint);
+      const source = sourceToken.address;
+      const sourceAmount = source
+        ? await readTokenBalance(connection, wallet.publicKey, currentConfig.mint)
+        : 0n;
+      if (!source || !sourceToken.tokenProgram) throw new Error("The test token mint is unavailable.");
       const slot = requestedSlot ?? Array.from(
         { length: safeCount(circle.maxMembers) },
         (_, index) => index
@@ -641,11 +638,11 @@ export default function Home() {
       const required =
         BigInt(circle.contribution?.toString() ?? "0") *
         BigInt(Math.max(1, safeCount(circle.maxMembers) - 1 - slot));
-      if ((sourceAccount?.amount ?? 0n) < required) {
+      if (sourceAmount < required) {
         throw new Error(
           `This turn needs ${amountText(
             required
-          )} test USDC. This wallet has ${amountText(sourceAccount?.amount ?? 0n)}.`
+          )} test USDC. This wallet has ${amountText(sourceAmount)}.`
         );
       }
       const createSourceAta = createAssociatedTokenAccountIdempotentInstruction(
@@ -666,7 +663,7 @@ export default function Home() {
             source,
             depositVault: client.vault("deposit", address),
             mint: currentConfig.mint,
-            tokenProgram: TOKEN_PROGRAM_ID,
+            tokenProgram: sourceToken.tokenProgram,
             systemProgram: anchor.web3.SystemProgram.programId,
           }),
         ]
@@ -688,15 +685,12 @@ export default function Home() {
     if (!selectedCircle || !wallet.publicKey || !selectedMember) return;
     try {
       const currentConfig = await client.fetchConfig();
-      const source = await getAssociatedTokenAddress(
-        currentConfig.mint,
-        wallet.publicKey
-      );
-      const account = await getAccount(connection, source, "confirmed").catch(
-        () => null
-      );
+      const sourceToken = await tokenAccountForMint(connection, wallet.publicKey, currentConfig.mint);
+      if (!sourceToken.address || !sourceToken.tokenProgram) throw new Error("The test token mint is unavailable.");
+      const source = sourceToken.address;
+      const balance = await readTokenBalance(connection, wallet.publicKey, currentConfig.mint);
       const needed = BigInt(selectedCircle.account.contribution?.toString() ?? "0");
-      if (!account || account.amount < needed) {
+      if (balance < needed) {
         throw new Error(
           `This payment needs ${amountText(
             needed
@@ -711,9 +705,9 @@ export default function Home() {
           circle: selectedCircle.address,
           member: selectedMembership!.memberAddress,
           source,
+          tokenProgram: sourceToken.tokenProgram,
           potVault: client.vault("pot", selectedCircle.address),
           mint: currentConfig.mint,
-          tokenProgram: TOKEN_PROGRAM_ID,
         })
       );
     } catch (cause) {

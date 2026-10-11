@@ -101,10 +101,14 @@ export type WalletCircle =
 export type CircleStatusName = "forming" | "active" | "completed" | "cancelled" | "unknown";
 
 export function circleStatusName(status: object): CircleStatusName {
-  const key = Object.keys(status)[0];
-  return key === "forming" || key === "active" || key === "completed" || key === "cancelled"
-    ? key
-    : "unknown";
+  const value = status as unknown;
+  const raw = typeof value === "string"
+    ? value
+    : value && typeof value === "object"
+      ? Object.keys(value)[0]
+      : undefined;
+  const key = raw?.replace(/_/g, "").toLowerCase();
+  return key === "forming" || key === "active" || key === "completed" || key === "cancelled" ? key : "unknown";
 }
 
 export type PaymentDue = CircleMembership & {
@@ -201,11 +205,7 @@ function toAnchorBn(value: IntegerLike): anchor.BN {
 }
 
 function isActiveStatus(status: unknown): boolean {
-  return (
-    typeof status === "object" &&
-    status !== null &&
-    Object.prototype.hasOwnProperty.call(status, "active")
-  );
+  return circleStatusName((status ?? {}) as object) === "active";
 }
 
 export class AjoCirclesClient {
