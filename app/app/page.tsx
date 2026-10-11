@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as anchor from "@coral-xyz/anchor";
-import dynamic from "next/dynamic";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -32,20 +31,10 @@ import {
 } from "lucide-react";
 import { calculateDeposit, circleStatusName, decodeCircle, decodeMember, type CircleMembership } from "ajo_circles_sdk";
 import { CircleRing } from "./components/circle-ring";
+import { WalletConnectControl } from "./components/wallet-connect-control";
 import { useCircleData } from "./hooks/use-circle-data";
 import { useDemoWallet } from "./hooks/use-demo-wallet";
 import { readTokenBalance, tokenAccountForMint } from "./lib/token-balance";
-
-const WalletMultiButton = dynamic(
-  () =>
-    import("@solana/wallet-adapter-react-ui").then(
-      (module) => module.WalletMultiButton
-    ),
-  {
-    ssr: false,
-    loading: () => <button className="wallet-button">Connect</button>,
-  }
-);
 
 const explorerBase = "https://explorer.solana.com/address";
 const decimals = 6;
@@ -156,13 +145,30 @@ function friendlyError(error: unknown) {
 
 function walletErrorText(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: number })?.code;
+  if (code === -32002 || /-32002|request already pending/i.test(message)) {
+    return "Phantom has a pending request. Open Phantom and approve it.";
+  }
+  if (code === 4001 || /4001|reject|declin|cancel/i.test(message)) {
+    return "The wallet request was cancelled.";
+  }
   if (/not ready|not initialized|unavailable/i.test(message)) {
     return "Your wallet is not ready. Open it and try again.";
   }
-  if (/reject|declin|cancel/i.test(message)) {
-    return "The wallet request was rejected.";
-  }
   return "Your wallet could not complete that request.";
+}
+
+function notifyWalletRequest(pending: boolean) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("ajo-wallet-request", { detail: pending }));
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, milliseconds: number) {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Phantom did not respond, try again")), milliseconds)),
+  ]);
 }
 
 function deadlineText(deadline: bigint, now = 0) {
@@ -483,11 +489,14 @@ export default function Home() {
   async function signInWithSwitchedAccount() {
     try {
       await wallet.disconnect();
-      await wallet.connect();
+      notifyWalletRequest(true);
+      await withTimeout(wallet.connect(), 15_000);
       setAccountSwitchAddress("");
       await refresh();
     } catch (cause) {
       showNotice(walletErrorText(cause), true);
+    } finally {
+      notifyWalletRequest(false);
     }
   }
 
@@ -519,17 +528,22 @@ export default function Home() {
         const simulation = await connection.simulateTransaction(transaction);
         if (simulation.value.err) throw simulationFailure(simulation.value);
         let signature: string;
-        if (transaction.serialize({ requireAllSignatures: false }).length > 1_232 && wallet.signAllTransactions) {
-          const [signed] = await wallet.signAllTransactions([transaction]);
-          signature = await connection.sendRawTransaction(signed.serialize(), {
-            skipPreflight: false,
-            maxRetries: 5,
-          });
-        } else {
-          signature = await wallet.sendTransaction(transaction, connection, {
-            skipPreflight: false,
-            maxRetries: 5,
-          });
+        notifyWalletRequest(true);
+        try {
+          if (transaction.serialize({ requireAllSignatures: false }).length > 1_232 && wallet.signAllTransactions) {
+            const [signed] = await withTimeout(wallet.signAllTransactions([transaction]), 45_000);
+            signature = await connection.sendRawTransaction(signed.serialize(), {
+              skipPreflight: false,
+              maxRetries: 5,
+            });
+          } else {
+            signature = await withTimeout(wallet.sendTransaction(transaction, connection, {
+              skipPreflight: false,
+              maxRetries: 5,
+            }), 45_000);
+          }
+        } finally {
+          notifyWalletRequest(false);
         }
         setNotice(`${label}, waiting for confirmation`);
         await confirmSignature(connection, signature, blockhash);
@@ -1162,7 +1176,7 @@ export default function Home() {
           </div>
           {demo.mode === "phantom" ? (
             <>
-              <WalletMultiButton className="wallet-button" />
+              <WalletConnectControl />
               {wallet.publicKey && <span className="wallet-active-account">Phantom {compactAddress(wallet.publicKey.toBase58())}</span>}
               {wallet.publicKey && <button className="wallet-disconnect" onClick={() => void wallet.disconnect()}>Disconnect</button>}
             </>
@@ -1285,7 +1299,7 @@ export default function Home() {
               <p>
                 Your turns, payments, deposits, and Ajo Score will appear here.
               </p>
-              <WalletMultiButton className="wallet-button" />
+              <WalletConnectControl />
             </div>
           ) : loading ? (
             <div className="circle-skeletons" aria-label="Loading your circles">

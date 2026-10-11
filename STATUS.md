@@ -183,3 +183,11 @@ Circle: 3GaxtHiXDnaFkiTwDBYr8FN9RfDsa37NpP1s8iViSxiB
 ```
 
 App typecheck and ESLint pass.
+
+## 2026 10 11 wallet connection state machine
+
+Wallet setup now relies on detected Wallet Standard wallets with no legacy Phantom or Solflare adapter instances and no autoConnect. Providers, endpoint configuration, and wallet error handling are memoized. The Phantom control has idle, connecting, connected, and error states, ignores duplicate connect clicks, shows Check Phantom to approve with Cancel, times out after 15 seconds with Try again, handles pending request code minus 32002, and handles rejection code 4001 calmly. Multiple detected extensions show More than one wallet extension detected. Choose one.
+
+Background directory and selected circle refreshes pause while a wallet connect or transaction signing request is pending. Transaction signing has a 45 second timeout and always clears the in flight state. The legacy adapter dependencies were removed from the app package and lockfile.
+
+App typecheck and ESLint pass using the app local TypeScript and ESLint binaries. Browser verification of connect, disconnect, reconnect, account switch, and ten repeated Phantom signing attempts is pending because no controllable browser tab was available in this session.

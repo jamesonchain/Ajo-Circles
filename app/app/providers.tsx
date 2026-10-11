@@ -1,14 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ConnectionProvider,
   WalletProvider,
   useConnection,
 } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
-import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
-import { SolflareWalletAdapter } from "@solana/wallet-adapter-solflare";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@solana/wallet-adapter-react-ui/styles.css";
 
@@ -41,23 +39,21 @@ export function Providers({
   const [queryClient] = useState(() => new QueryClient({
     defaultOptions: { queries: { staleTime: 5_000, refetchOnWindowFocus: false } },
   }));
-  const wallets = useMemo(
-    () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
-    []
-  );
+  const wallets = useMemo(() => [], []);
+  const walletConfig = useMemo(() => ({ commitment: "confirmed" as const }), []);
 
-  const onWalletError = (error: Error) => {
+  const onWalletError = useCallback((error: Error) => {
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("ajo-wallet-error", { detail: error }));
     }
-  };
+  }, []);
 
   return (
     <ConnectionProvider
       endpoint={endpoint}
-      config={{ commitment: "confirmed" }}
+      config={walletConfig}
     >
-      <WalletProvider wallets={wallets} autoConnect onError={onWalletError}>
+      <WalletProvider wallets={wallets} onError={onWalletError}>
         <WalletModalProvider>
           <QueryClientProvider client={queryClient}>
             <RpcStartupCheck />
