@@ -252,7 +252,6 @@ export default function Home() {
     refreshSelected,
     invalidateDirectory,
     directoryMembers,
-    clearWalletData,
     optimisticBalances,
     markCircleCancelled,
     wallet,
@@ -289,6 +288,7 @@ export default function Home() {
   const [accountSwitchAddress, setAccountSwitchAddress] = useState("");
   const previousWalletAddress = useRef<string | null>(null);
   const accountSwitchPending = Boolean(accountSwitchAddress);
+  const walletAddress = wallet.publicKey?.toBase58() ?? "";
 
   const selectedCircle = useMemo(
     () => circles.find(({ address }) => address.toBase58() === selectedAddress),
@@ -428,59 +428,34 @@ export default function Home() {
     return () => window.removeEventListener("ajo-wallet-error", onWalletError);
   }, [showNotice]);
 
-  const handleAccountSwitch = useCallback((address: string) => {
-    setAccountSwitchAddress(address);
-    setSelectedAddress("");
-    clearWalletData();
-  }, [clearWalletData]);
-
   useEffect(() => {
-    if (demo.mode !== "phantom") {
-      previousWalletAddress.current = null;
-      return;
-    }
-    const address = wallet.publicKey?.toBase58() ?? null;
-    if (previousWalletAddress.current && address && previousWalletAddress.current !== address) {
-      handleAccountSwitch(address);
-    }
-    previousWalletAddress.current = address;
-  }, [demo.mode, handleAccountSwitch, wallet.publicKey]);
-
-  useEffect(() => {
-    if (demo.mode !== "phantom") return;
-    type AccountEventProvider = {
-      on?: (event: string, handler: (value: unknown) => void) => void;
-      removeListener?: (event: string, handler: (value: unknown) => void) => void;
-      off?: (event: string, handler: (value: unknown) => void) => void;
-    };
-    const provider = (window as Window & { solana?: AccountEventProvider }).solana;
-    const adapter = wallet.wallet?.adapter as unknown as AccountEventProvider | undefined;
-    const eventProviders = [provider, adapter].filter(
-      (value, index, all): value is AccountEventProvider => Boolean(value?.on) && all.indexOf(value) === index
-    );
-    if (!eventProviders.length) return;
-    const onAccountChanged = (value: unknown) => {
-      const account = value && typeof value === "object" && "accounts" in value
-        ? (value as { accounts?: Array<{ address?: string }> }).accounts?.[0]?.address
-        : undefined;
-      const next = value instanceof anchor.web3.PublicKey
-        ? value.toBase58()
-        : typeof value === "string" ? value : account ?? "";
-      if (next) handleAccountSwitch(next);
-    };
-    eventProviders.forEach((eventProvider) => {
-      eventProvider.on?.("accountChanged", onAccountChanged);
-      eventProvider.on?.("change", onAccountChanged);
-    });
-    return () => {
-      eventProviders.forEach((eventProvider) => {
-        eventProvider.removeListener?.("accountChanged", onAccountChanged);
-        eventProvider.off?.("accountChanged", onAccountChanged);
-        eventProvider.removeListener?.("change", onAccountChanged);
-        eventProvider.off?.("change", onAccountChanged);
-      });
-    };
-  }, [demo.mode, handleAccountSwitch, wallet.wallet]);
+    const previous = previousWalletAddress.current;
+    const changedAccount = Boolean(previous && walletAddress && previous !== walletAddress);
+    previousWalletAddress.current = walletAddress || null;
+    const timer = window.setTimeout(() => {
+      setSelectedAddress("");
+      setSelectedMembers([]);
+      setPotAmount(0n);
+      setDepositAmount(0n);
+      setDialog(null);
+      setCircleAddressInput("");
+      setJoinSlot(null);
+      setJoinTarget(null);
+      setJoinTargetMember(null);
+      setCreateStep(1);
+      setCreatedInvite("");
+      setBusy(false);
+      setNotice("");
+      setNoticeLink("");
+      setShareReady(false);
+      setCancelConfirmOpen(false);
+      setShowCancelled(false);
+      setShowArchive(false);
+      if (changedAccount) setAccountSwitchAddress(walletAddress);
+      if (!walletAddress) setAccountSwitchAddress("");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [demo.mode, walletAddress]);
 
   async function signInWithSwitchedAccount() {
     await wallet.disconnect();
@@ -1231,16 +1206,18 @@ export default function Home() {
             <RefreshCw size={17} className={loading ? "spin" : ""} />
             <span>Refresh</span>
           </button>
-          <button
-            className="button button-primary"
-            onClick={() => setDialog("create")}
-            disabled={accountSwitchPending}
-          >
-            <Plus size={18} /> Create circle
-          </button>
-          <button className="button button-outline" onClick={() => void requestTestMoney()} disabled={testMoneyBusy || !wallet.publicKey || accountSwitchPending}>
-            <Wallet size={17} /> {testMoneyBusy ? "Funding wallets" : demo.mode === "demo" ? "Fund demo wallets" : "Get test money"}
-          </button>
+          {wallet.publicKey && <>
+            <button
+              className="button button-primary"
+              onClick={() => setDialog("create")}
+              disabled={accountSwitchPending}
+            >
+              <Plus size={18} /> Create circle
+            </button>
+            <button className="button button-outline" onClick={() => void requestTestMoney()} disabled={testMoneyBusy || accountSwitchPending}>
+              <Wallet size={17} /> {testMoneyBusy ? "Funding wallets" : demo.mode === "demo" ? "Fund demo wallets" : "Get test money"}
+            </button>
+          </>}
         </div>
       </section>
 
@@ -1262,18 +1239,16 @@ export default function Home() {
             <strong>{loading ? "..." : totalMembers}</strong>
             <span>member places</span>
           </div>
-          <div className="stat">
-            <strong>
-              {tokenBalance === null
-                ? wallet.publicKey ? "0.00 USDC" : "Connect"
-                : `${amountText(tokenBalance)} USDC`}
-            </strong>
-            <span>your test balance</span>
-          </div>
-          <div className="stat">
-            <strong>{solBalance === null ? wallet.publicKey ? "0.000 SOL" : "Connect" : `${solText(solBalance)} SOL`}</strong>
-            <span>devnet balance</span>
-          </div>
+          {wallet.publicKey && <>
+            <div className="stat">
+              <strong>{tokenBalance === null ? "—" : `${amountText(tokenBalance)} USDC`}</strong>
+              <span>your test balance</span>
+            </div>
+            <div className="stat">
+              <strong>{solBalance === null ? "—" : `${solText(solBalance)} SOL`}</strong>
+              <span>devnet balance</span>
+            </div>
+          </>}
         </div>
       </section>
 
@@ -1283,6 +1258,7 @@ export default function Home() {
         </div>
       )}
 
+      {wallet.publicKey ? <>
       <section className="workspace" id="circles">
         <div className="workspace-main">
           <div className="section-head compact-head">
@@ -1694,6 +1670,18 @@ export default function Home() {
           </div>
         </div>
       </section>
+      </> : (
+        <section className="workspace" id="circles">
+          <div className="workspace-main">
+            <div className="empty-state">
+              <div className="empty-mark"><Wallet size={24} /></div>
+              <h2>Connect your wallet</h2>
+              <p>Connect to see your circles, balances, turns, and Ajo Score.</p>
+              <WalletMultiButton className="wallet-button" />
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="directory" id="directory">
         <div className="section-head compact-head">
@@ -1711,9 +1699,9 @@ export default function Home() {
         {!showArchive && openCircles.length === 0 ? (
           <div className="directory-empty">
             <p>No open circles right now. Create the first one.</p>
-            <button className="button button-gold" onClick={() => setDialog("create")}>
+            {wallet.publicKey && <button className="button button-gold" onClick={() => setDialog("create")}>
               <Plus size={17} /> Create circle
-            </button>
+            </button>}
           </div>
         ) : (
           <div className="directory-grid">
@@ -1747,7 +1735,7 @@ export default function Home() {
                         {spots} {spots === 1 ? "turn" : "turns"} open
                       </span>
                     </div>
-                    {membership?.member ? (
+                    {wallet.publicKey && (membership?.member ? (
                       <button className="button button-outline" onClick={() => setSelectedAddress(address.toBase58())}>
                         View circle
                       </button>
@@ -1764,7 +1752,7 @@ export default function Home() {
                       </button>
                     ) : showArchive ? (
                       <span className="state-pill">{statusName(account.status)}</span>
-                    ) : null}
+                    ) : null)}
                   </article>
                 );
               })}

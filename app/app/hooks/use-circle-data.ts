@@ -89,17 +89,27 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
   const { connection } = useConnection();
   const adapterWallet = useWallet();
   const wallet = walletOverride ?? adapterWallet;
+  const walletKey = wallet.publicKey?.toBase58() ?? "";
   const queryClient = useQueryClient();
   const { data: directoryData, refetch: refetchDirectory } = useQuery({
-    queryKey: ["circles", "directory"],
+    queryKey: ["circles", "directory", walletKey],
     queryFn: () => fetchCircleDirectory(),
     placeholderData: keepPreviousData,
+    staleTime: 4_000,
+    refetchInterval: () =>
+      walletKey && typeof document !== "undefined" && document.visibilityState === "visible"
+        ? 6_000
+        : false,
   });
   const { data: walletData, refetch: refetchWallet } = useQuery({
-    queryKey: ["circles", "wallet", wallet.publicKey?.toBase58() ?? ""],
+    queryKey: ["circles", "wallet", walletKey],
     queryFn: () => fetchCircleDirectory(wallet.publicKey!.toBase58()),
-    enabled: Boolean(wallet.publicKey),
-    placeholderData: keepPreviousData,
+    enabled: Boolean(walletKey),
+    staleTime: 4_000,
+    refetchInterval: () =>
+      walletKey && typeof document !== "undefined" && document.visibilityState === "visible"
+        ? 6_000
+        : false,
   });
   const [circles, setCircles] = useState<CircleRow[]>([]);
   const [directoryMembers, setDirectoryMembers] = useState<{ address: PublicKey; account: MemberAccount }[]>([]);
@@ -112,6 +122,11 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
   const [error, setError] = useState("");
   const rateLimitFailures = useRef(0);
   const hasLoaded = useRef(false);
+  const currentWalletKey = useRef(walletKey);
+  const previousWalletKey = useRef("");
+  useEffect(() => {
+    currentWalletKey.current = walletKey;
+  }, [walletKey]);
   const onRpcRetry = useCallback(() => {
     rateLimitFailures.current += 1;
     if (rateLimitFailures.current >= 3) setError("The network is busy, retrying");
@@ -144,14 +159,34 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
     setLoading(true);
   }, []);
 
+  useEffect(() => {
+    const previous = previousWalletKey.current;
+    if (previous && previous !== walletKey) {
+      void queryClient.cancelQueries({ queryKey: ["circles", "wallet", previous], exact: true });
+      queryClient.removeQueries({ queryKey: ["circles", "wallet", previous], exact: true });
+    }
+    if (!walletKey) {
+      const walletQueries = (query: { queryKey: readonly unknown[] }) =>
+        query.queryKey[0] === "circles" && query.queryKey[1] === "wallet";
+      void queryClient.cancelQueries({ predicate: walletQueries });
+      queryClient.removeQueries({ predicate: walletQueries });
+    }
+    previousWalletKey.current = walletKey;
+    const timer = window.setTimeout(clearWalletData, 0);
+    return () => window.clearTimeout(timer);
+  }, [clearWalletData, queryClient, walletKey]);
+
   const optimisticBalances = useCallback((usdc: bigint, sol: bigint) => {
     setTokenBalance((current) => (current ?? 0n) + usdc);
     setSolBalance((current) => (current ?? 0n) + sol);
   }, []);
 
   const invalidateDirectory = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["circles"] });
-  }, [queryClient]);
+    void queryClient.invalidateQueries({ queryKey: ["circles", "directory", walletKey] });
+    if (walletKey) {
+      void queryClient.invalidateQueries({ queryKey: ["circles", "wallet", walletKey] });
+    }
+  }, [queryClient, walletKey]);
 
   const provider = useMemo(() => {
     const signedWallet =
@@ -230,6 +265,7 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
   }, [decodeDirectory, wallet.publicKey, walletData]);
 
   const refresh = useCallback(async () => {
+    const requestWalletKey = walletKey;
     if (!hasLoaded.current) setLoading(true);
     setError("");
     try {
@@ -239,10 +275,11 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
       ]);
       if (directoryResult.error) throw directoryResult.error;
       if (walletResult.error) throw walletResult.error;
+      if (currentWalletKey.current !== requestWalletKey) return;
       const directory = decodeDirectory(directoryResult.data);
       setCircles(directory.circles.sort(sortCircleRows));
       setDirectoryMembers(directory.members);
-      if (wallet.publicKey) {
+      if (requestWalletKey && wallet.publicKey) {
         const [walletCircles, walletScore, config] = await withRpcRetry(
           () =>
             Promise.all([
@@ -271,6 +308,7 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
           onRpcRetry,
           onRpcSuccess
         );
+        if (currentWalletKey.current !== requestWalletKey) return;
         setSolBalance(balances.sol);
         setTokenBalance(balances.usdc);
       } else {
@@ -286,10 +324,11 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
       hasLoaded.current = true;
       setLoading(false);
     }
-  }, [client, decodeDirectory, onRpcRetry, onRpcSuccess, readBalances, refetchDirectory, refetchWallet, wallet.publicKey]);
+  }, [client, decodeDirectory, onRpcRetry, onRpcSuccess, readBalances, refetchDirectory, refetchWallet, wallet.publicKey, walletKey]);
 
   const refreshSelected = useCallback(async () => {
-    if (!selectedCircleAddress) return;
+    const requestWalletKey = walletKey;
+    if (!selectedCircleAddress || !requestWalletKey) return;
     try {
       const address = new PublicKey(selectedCircleAddress);
       const [account, member, selectedScore] = await withRpcRetry(
@@ -301,6 +340,7 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
         onRpcRetry,
         onRpcSuccess
       );
+      if (currentWalletKey.current !== requestWalletKey) return;
       setCircles((current) => {
         const next = current.filter((row) => !row.address.equals(address));
         return [...next, { address, account }].sort(sortCircleRows);
@@ -335,7 +375,7 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
       console.error("[Ajo Circles] RPC request failed", cause);
       if (!isRateLimited(cause)) setError(`RPC rejected the request: ${rpcReason(cause)}`);
     }
-  }, [client, onRpcRetry, onRpcSuccess, readBalances, selectedCircleAddress, wallet.publicKey]);
+  }, [client, onRpcRetry, onRpcSuccess, readBalances, selectedCircleAddress, wallet.publicKey, walletKey]);
 
   const markCircleCancelled = useCallback((address: PublicKey) => {
     setCircles((current) =>
@@ -360,19 +400,19 @@ export function useCircleData(selectedCircleAddress = "", walletOverride?: Walle
   }, [refresh]);
 
   useEffect(() => {
-    if (!selectedCircleAddress) return;
+    if (!selectedCircleAddress || !walletKey) return;
     const initial = window.setTimeout(() => void refreshSelected(), 0);
     const poll = () => {
       if (document.visibilityState === "visible") void refreshSelected();
     };
-    const timer = window.setInterval(poll, 8_000);
+    const timer = window.setInterval(poll, 6_000);
     document.addEventListener("visibilitychange", poll);
     return () => {
       window.clearTimeout(initial);
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", poll);
     };
-  }, [refreshSelected, selectedCircleAddress]);
+  }, [refreshSelected, selectedCircleAddress, walletKey]);
 
   return {
     client,

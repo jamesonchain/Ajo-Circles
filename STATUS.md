@@ -228,3 +228,19 @@ Removed the custom connection state machine, manual connect call, connection tim
 The account switch layer now only watches the wallet public key, clears wallet data, and its Connect this account action disconnects then opens the standard wallet modal. Providers remain single and stable. Wallet errors are logged and surfaced through the existing short notice.
 
 App typecheck, ESLint, and production build pass. Browser verification of ten connect, disconnect, reconnect, account switch, and signing cycles remains unavailable because this session has no controllable browser tab.
+
+## 2026 10 14 wallet state and refresh fix
+
+Disconnected and switching wallets now clear balances, selected circle state, members, score, dialogs, forms, notices, pending flags, and wallet scoped query data. Personal sections and action controls are hidden until a wallet is connected. Public directory browsing remains available without wallet labels or join controls. Balance placeholders use a dash instead of zero or stale values.
+
+Directory and wallet queries include the current wallet key, use four second stale time, keep data only within the same query key, and poll every six seconds only for a connected wallet while the tab is visible. Selected circle refresh also follows the connected and visible tab rule. The circles API returns cached data immediately while refreshing expired entries in the background, with a five second cache window.
+
+Manual verification checklist:
+
+1. Load the page with no wallet. Only the connect empty state and nonpersonal public directory are visible.
+2. Connect account 1. Wallet balances, score, circles, and member data appear.
+3. Switch to account 2. Account 1 data is cleared before account 2 data loads, so no account 1 data flashes.
+4. Disconnect. Personal sections and balances clear and no balance number remains.
+5. Reconnect. Account 2 data returns from its wallet scoped query and refreshes without a full page reload.
+
+App typecheck and production build pass. The app build command is `next build` from the `app` directory, matching the existing Vercel root directory setup. Interactive browser verification remains pending because this session has no controllable browser tab.

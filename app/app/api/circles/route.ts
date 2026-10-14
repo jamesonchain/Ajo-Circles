@@ -13,6 +13,7 @@ const cacheTtlMs = 5_000;
 type AccountRow = { address: string; data: string };
 type CircleResponse = { circles: AccountRow[]; members: AccountRow[]; stale: boolean; reason?: string };
 const cached = new Map<string, { expiresAt: number; value: CircleResponse }>();
+const refreshing = new Map<string, Promise<CircleResponse>>();
 
 async function load(rpc: string, wallet?: PublicKey): Promise<CircleResponse> {
   const connection = new Connection(rpc, "confirmed");
@@ -73,6 +74,32 @@ async function load(rpc: string, wallet?: PublicKey): Promise<CircleResponse> {
   };
 }
 
+async function refreshCache(cacheKey: string, wallet?: PublicKey) {
+  const existing = refreshing.get(cacheKey);
+  if (existing) return existing;
+  const task = (async () => {
+    const primary = process.env.SOLANA_RPC_URL ?? process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
+    const endpoints = [primary, "https://api.devnet.solana.com"].filter(
+      (value, index, all): value is string => Boolean(value) && all.indexOf(value) === index
+    );
+    let lastError: unknown;
+    for (const endpoint of endpoints) {
+      try {
+        const value = await load(endpoint, wallet);
+        cached.set(cacheKey, { expiresAt: Date.now() + cacheTtlMs, value });
+        return value;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError ?? new Error("No RPC endpoint is configured.");
+  })().finally(() => {
+    refreshing.delete(cacheKey);
+  });
+  refreshing.set(cacheKey, task);
+  return task;
+}
+
 export async function GET(request: Request) {
   const walletText = new URL(request.url).searchParams.get("wallet") ?? undefined;
   let wallet: PublicKey | undefined;
@@ -85,20 +112,20 @@ export async function GET(request: Request) {
   }
   const cacheKey = wallet?.toBase58() ?? "all";
   const fresh = cached.get(cacheKey);
-  if (fresh && fresh.expiresAt > Date.now()) return Response.json(fresh.value);
-  const primary = process.env.SOLANA_RPC_URL ?? process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
-  const endpoints = [primary, "https://api.devnet.solana.com"].filter(
-    (value, index, all): value is string => Boolean(value) && all.indexOf(value) === index
-  );
+  const headers = { "Cache-Control": "private, max-age=5, stale-while-revalidate=2" };
+  if (fresh && fresh.expiresAt > Date.now()) return Response.json(fresh.value, { headers });
+  if (fresh) {
+    void refreshCache(cacheKey, wallet).catch((error) => {
+      console.warn("[Ajo Circles] background directory refresh failed", error);
+    });
+    return Response.json(fresh.value, { headers });
+  }
   let lastError: unknown;
-  for (const endpoint of endpoints) {
-    try {
-      const value = await load(endpoint, wallet);
-      cached.set(cacheKey, { expiresAt: Date.now() + cacheTtlMs, value });
-      return Response.json(value, { headers: { "Cache-Control": "private, max-age=5" } });
-    } catch (error) {
-      lastError = error;
-    }
+  try {
+    const value = await refreshCache(cacheKey, wallet);
+    return Response.json(value, { headers });
+  } catch (error) {
+    lastError = error;
   }
   const stale = cached.get(cacheKey);
   if (stale) {
